@@ -158,7 +158,7 @@ zcli --workspace $TestRoot --session full-test --new
 ### FT-10 多工具综合任务（P0）
 
 ```text
-请完成以下任务：先查找 src 下所有 .py 文件，逐个读取；然后创建 reports/python-files.md，第一行是“# Python files”，之后按文件名排序记录每个文件的相对路径和完整内容。写完后重新读取报告并检查是否遗漏。只有验证成功后才说完成。
+请完成以下任务：先查找 zcli 下所有 .py 文件，逐个读取；然后创建 reports/python-files.md，第一行是“# Python files”，之后按文件名排序记录每个文件的相对路径和完整内容。写完后重新读取报告并检查是否遗漏。只有验证成功后才说完成。
 ```
 
 **验证功能**：规划能力、`glob/read_file/write_file` 多工具循环、结果验证、顺序和内容整合。
@@ -227,7 +227,7 @@ Set-Content (Join-Path $TestRoot "disposable.txt") "safe to delete"
 
 **通过标准**：命令实际执行；`disposable.txt` 被删除；Agent 根据工具结果报告完成。此用例只允许删除明确创建的一次性文件。
 
-### SEC-06 非交互模式的 ASK 命令（P1，建议自动化验证）
+### SEC-06 非交互模式的 ASK 命令（P1，建议自动化验证）todo:此处逃逸
 
 CLI 默认是交互模式，普通 Prompt 无法覆盖 `interactive=False`。可由现有单元测试或新增集成脚本构造 `Agent(..., interactive=False)`，再给 Agent：
 
@@ -419,10 +419,14 @@ zcli --workspace $TestRoot --session ..\escape
 
 ### CTX-01 触发上下文压缩并保持连续性（P0）
 
-用独立数据目录和较小阈值启动，避免制造超长对话：
+**触发条件**：消息数 ≥ 8 **且** `estimate_size(messages) > context_limit`。
+其中 `estimate_size = len(json.dumps(messages)) // 4`，因此 `context_limit=200` 约需 800+ 字节 JSON。
+压缩检查在**每条 assistant 响应保存后**立即执行，确保第 4 轮（8 条消息时）触发。
+
+用独立数据目录和较小阈值启动：
 
 ```powershell
-$env:ZCLI_CONTEXT_LIMIT = "800"
+$env:ZCLI_CONTEXT_LIMIT = "200"
 $env:ZCLI_DATA_DIR = Join-Path $TestRoot ".zcli-compact"
 zcli --workspace $TestRoot --session compact --new
 ```
@@ -430,24 +434,29 @@ zcli --workspace $TestRoot --session compact --new
 然后依次输入以下 Prompt（建议每条等模型回答后再发下一条）：
 
 ```text
-长期任务背景：我们正在设计一个名为 Aurora 的命令行工具，语言是 Python，入口文件计划为 aurora.py，核心约束是离线运行。请复述这些信息，不要写文件。
+长期任务背景：我们正在设计一个名为 Aurora 的命令行工具，语言是 Python，入口文件计划为 aurora.py，核心约束是严格离线运行，绝不能连接任何网络。请复述这些信息，不要写文件。
 ```
 
 ```text
-补充决定：Aurora 的配置格式使用 YAML，错误码 12 表示配置无效。请把目前所有决定整理成四点，不要写文件。
+补充决定：Aurora 的配置格式使用 YAML（文件命名 convention 为 aurora.yaml），错误码 12 专门表示配置无效或不完整。请把目前所有决定整理为清晰的四点，不要写文件。
 ```
 
 ```text
-再补充：日志默认写入 stderr，默认级别是 INFO。请整理所有已有决定，不要写文件。
+再补充一条：Aurora 的日志默认写入 stderr 流，默认日志级别设为 INFO 而非 DEBUG。请整理所有目前已有的决定，不要写文件。
 ```
 
 ```text
-现在请完整列出 Aurora 的名称、语言、入口文件、联网约束、配置格式、错误码 12 的含义、日志目标和默认日志级别。
+现在请完整列出 Aurora 的全部规格——包括名称、语言、入口文件、联网约束、配置格式、错误码 12 的含义、日志目标流和默认日志级别这八项信息。
 ```
 
-**验证功能**：尺寸估算、超过阈值后的摘要请求、消息裁剪、摘要持久化、压缩后续聊。
+**验证功能**：尺寸估算、超过阈值后的摘要请求、消息裁剪、摘要持久化、压缩后继续对话。
 
-**通过标准**：`.zcli-compact/sessions/compact.json` 的 `summary` 非空，消息中出现 `<session_summary>`；最终回答八项信息全部正确；不存在 Anthropic 消息角色/工具配对错误。
+**通过标准**：
+- `.zcli-compact/sessions/compact.json` 的 `summary` 非空
+- 消息列表中出现 `<session_summary>` 标签
+- 最终回答八项信息全部正确
+- 不存在 Anthropic 消息角色/工具配对错误
+- （可选）压缩后文件大小明显小于未压缩的 `default.json`
 
 ### CTX-02 压缩后跨进程恢复（P1）
 

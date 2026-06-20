@@ -8,11 +8,16 @@ dist/
 build/
 *.egg
 
-# Virtual environment (venv 在 zcli/ 目录内)
+# Virtual environment
+.venv/
+venv/
 zcli/Scripts/
 zcli/Lib/
 zcli/pyvenv.cfg
 zcli/include/
+
+# ZCLI runtime
+.zcli/
 
 # Testing
 .pytest_cache/

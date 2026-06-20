@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from . import __version__
 from .agent import Agent
 from .config import Settings
+from .display import show_banner
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,8 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     session = agent.sessions.create(args.session) if args.new else agent.sessions.load_or_create(args.session)
-    print(f"ZCLI 0.1 | workspace: {settings.workspace} | session: {session.id}")
-    print("Commands: /exit, /memory, /sessions")
+    show_banner(settings, session.id, __version__)
     while True:
         try:
             query = input("zcli >> ").strip()

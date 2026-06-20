@@ -69,6 +69,7 @@ class Agent:
             blocks = _blocks_to_dicts(response.content)
             session.messages.append({"role": "assistant", "content": blocks})
             self.sessions.save(session)
+            self._compact_if_needed(session)  # 检查当前轮是否触发压缩
 
             text = "\n".join(block.get("text", "") for block in blocks if block.get("type") == "text").strip()
             if text:
@@ -98,7 +99,7 @@ class Agent:
         # remains paired with the retained tool_use block.
         preferred = max(2, len(session.messages) - 6)
         split = next(
-            (index for index in range(preferred, 1, -1)
+            (index for index in range(preferred, 0, -1)
              if session.messages[index].get("role") == "assistant"),
             0,
         )
