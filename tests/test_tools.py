@@ -31,3 +31,17 @@ def test_unknown_tool_returns_error(tmp_path: Path):
 def test_direct_tool_execution_still_enforces_permission(tmp_path: Path):
     tools = ToolRegistry(tmp_path, MemoryStore(tmp_path / "data"), interactive=False)
     assert tools.execute("bash", {"command": "git push"}) == "Permission denied: command requires interactive approval"
+
+
+def test_planning_tools_are_exposed_to_model(tmp_path: Path):
+    tools = ToolRegistry(tmp_path, MemoryStore(tmp_path / "data"), interactive=False)
+    names = {definition["name"] for definition in tools.definitions}
+
+    assert {
+        "todo_write",
+        "create_task",
+        "list_tasks",
+        "get_task",
+        "claim_task",
+        "complete_task",
+    } <= names

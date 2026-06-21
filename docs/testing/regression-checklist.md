@@ -27,6 +27,10 @@
 - [ ] PreToolUse 可阻断工具，权限拒绝作为 tool_result 返回
 - [ ] PostToolUse 可检查或改写工具输出
 - [ ] Stop Hook 最多请求一次续跑，不形成循环
+- [ ] 复杂任务先调用 todo_write，Todo 状态随 Session 保存
+- [ ] 三个非 Todo 工具调用后注入更新提醒
+- [ ] Task Graph 能创建依赖、阻止提前认领并在完成上游后解锁
+- [ ] 新 Session 通过 `/tasks` 恢复持久任务
 - [ ] 记忆自动抽取
 - [ ] 错误不崩溃
 

@@ -9,16 +9,17 @@
 本文提供一套可重复执行的端到端 Prompt，用来验证 ZCLI 0.1 的实际能力，而不只验证模型“会不会回答”。覆盖范围依据当前源码和测试用例整理：
 
 - Agent 对话、语言遵循和工具循环
-- `bash`、`read_file`、`write_file`、`edit_file`、`glob`、`remember` 六个工具
+- 12 个工具：基础文件/Shell、`remember`、`todo_write` 和 5 个 Task Graph 工具
 - `UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 四个生命周期 Hook
 - 工作区路径隔离、危险命令硬拒绝、交互式审批
 - Session 创建、保存、恢复、列表、非法 ID 和同名冲突
+- Session TodoWrite、状态更新、提醒与持久化 Task Graph
 - Memory 显式记忆、自动提取、索引、相关召回、覆盖更新和类型
 - 长上下文压缩及压缩后的连续性
 - 工具报错、模型不应虚报成功、中文与 UTF-8 文件
 - CLI 内置命令和配置项
 
-尚未实现的 Team、Cron、Task Graph、Worktree 和真实 MCP 不应纳入“通过率”，见第 9 节。
+尚未实现的 Team、Cron、Worktree 和真实 MCP 不应纳入“通过率”，见第 10 节。
 
 本手册包含两类测试：
 
@@ -85,6 +86,7 @@ Get-Content "$env:ZCLI_DATA_DIR\sessions\full-test.json" -Raw | ConvertFrom-Json
 
 # 查看长期记忆、压缩前 transcript 和大型工具输出
 Get-ChildItem "$env:ZCLI_DATA_DIR\memory" -Force
+Get-ChildItem "$env:ZCLI_DATA_DIR\tasks" -Force
 Get-ChildItem "$env:ZCLI_DATA_DIR\transcripts" -Force
 Get-ChildItem "$env:ZCLI_DATA_DIR\tool-results" -Force
 ```
@@ -332,7 +334,83 @@ python -m pytest -q tests/test_hooks.py -k stop_hook
 
 **通过标准**：Stop Hook 注入一次 continuation，模型多执行一轮；本用户轮次不再次触发 Stop Hook，最终正常返回，不形成无限循环。
 
-## 7. Session 与 Memory 场景
+## 7. TodoWrite 与 Task Graph
+
+Todo 和 Task Graph 必须分别验证：Todo 是当前 Session 的步骤列表；Task Graph 是所有 Session 共享的持久任务 DAG。
+
+### TODO-01 复杂任务先计划再执行（P0，真实 Provider）
+
+```text
+请完成一个多步骤任务：读取 seed.txt，把三行内容按字母倒序写入 reports/reversed.txt，然后重新读取验证。开始执行前必须先使用 todo_write 创建清单；每完成一步都更新状态，最终所有项目必须是 completed。
+```
+
+**通过标准**：第一次执行型工具为 `todo_write`；清单至少包含读取、写入、验证；状态经历 pending/in_progress/completed；目标文件正确；最终 Session JSON 的 `todos` 全部为 `completed`。
+
+### TODO-02 `/todos` 与同 Session 恢复（P1，真实 CLI）
+
+执行 TODO-01 后输入：
+
+```text
+/todos
+```
+
+退出并重新打开同一 Session，再次输入 `/todos`。
+
+**通过标准**：两次均显示相同清单和 completed 状态；命令没有发送给模型；`.zcli/sessions/<id>.json` 包含 `todos`。
+
+### TODO-03 三轮未更新提醒（P1，受控 Agent 集成）
+
+```powershell
+python -m pytest -q tests/test_todos.py -k reminder
+```
+
+**通过标准**：连续执行三个非 `todo_write` 工具后，下一次模型调用的消息中出现 `<reminder>Update your todos.</reminder>`，计数随后重置为 0。
+
+### TODO-04 Todo 输入校验（P0，受控测试）
+
+```powershell
+python -m pytest -q tests/test_todos.py -k "validates or invalid_status"
+```
+
+**通过标准**：合法状态被保存；空内容、未知状态或无活动 Session 返回错误，不破坏已有 Todo。
+
+### TASK-01 创建依赖图（P0，真实 Provider）
+
+```text
+请使用持久任务工具创建三个任务：A“设计数据结构”；B“实现解析器”，依赖 A；C“编写集成测试”，依赖 B。必须先创建上游任务并从真实工具结果取得 ID，再把 ID 填入下游 blockedBy。创建后调用 list_tasks 展示任务图，不要开始执行任务。
+```
+
+**通过标准**：出现三次 `create_task` 和一次 `list_tasks`；`.zcli/tasks/` 有三个合法 JSON；B 的 `blockedBy` 是 A 的真实 ID，C 的 `blockedBy` 是 B 的真实 ID；状态均为 pending。
+
+### TASK-02 阻塞、认领、完成与解锁（P0，真实 Provider）
+
+在 TASK-01 后输入：
+
+```text
+请先尝试认领“实现解析器”，确认它因依赖未完成而失败。然后认领并完成“设计数据结构”，再次认领“实现解析器”。每一步都必须使用任务工具，并如实报告工具结果。
+```
+
+**通过标准**：第一次认领 B 返回 blocked；A 从 pending → in_progress → completed；完成 A 的结果包含 `Unblocked: 实现解析器`；第二次认领 B 成功并变为 in_progress。
+
+### TASK-03 跨 Session 持久化（P0，新 Session）
+
+退出当前 Session，创建新 Session 后输入 `/tasks`，再输入：
+
+```text
+请使用 get_task 查看当前处于 in_progress 的任务，告诉我它的 owner 和上游依赖状态，不要修改任务。
+```
+
+**通过标准**：新 Session 能看到同一 Task Graph；`/tasks` 不调用模型；`get_task` 返回 B 的完整 JSON，owner 非空，A 为 completed。
+
+### TASK-04 状态机和缺失依赖（P1，受控测试）
+
+```powershell
+python -m pytest -q tests/test_tasks.py
+```
+
+**通过标准**：依赖未完成或不存在时不能 claim；只有 in_progress 能 complete；任务能被新 `TaskStore` 实例恢复；非法 ID 和空标题被拒绝。
+
+## 8. Session 与 Memory 场景
 
 ### SES-01 同会话上下文连续性（P0，同会话）
 
@@ -506,7 +584,7 @@ zcli --workspace $TestRoot --session ..\escape
 
 **通过标准**：用户仍得到 `4`，Session 已保存；只缺少自动记忆，不抛出顶层异常。
 
-## 8. 上下文压缩、错误恢复与配置
+## 9. 上下文压缩、错误恢复与配置
 
 本节必须区分黑盒测试和故障注入测试。压缩的正常路径可以通过 CLI 验证；429、529、`max_tokens` 和 prompt-too-long 不能用自然语言 Prompt 可靠触发，应以 Fake Client 自动化测试作为发布证据。
 
@@ -678,7 +756,7 @@ python -m pytest -q tests/test_config_recovery.py
 
 **通过标准**：空行不调用模型；退出命令立即结束且不进入 Session 消息。
 
-## 9. 明确验证尚未实现的边界
+## 10. 明确验证尚未实现的边界
 
 以下 Prompt 用于防止误判产品能力。预期结果不是“功能成功”，而是 Agent 诚实说明当前无法使用专用能力，且不编造执行记录。
 
@@ -690,9 +768,9 @@ python -m pytest -q tests/test_config_recovery.py
 
 **验证功能**：能力边界诚实性。
 
-**通过标准**：不出现伪造的 Team/Cron/MCP 工具结果；明确说明这些专用工具当前未注册。当前同样未实现 Task Graph 和 Worktree 专用能力。
+**通过标准**：不出现伪造的 Team/Cron/MCP 工具结果；明确说明这些专用工具当前未注册。当前同样未实现 Worktree 专用能力，但 TodoWrite 和 Task Graph 已经可用。
 
-## 10. 建议执行顺序与结果记录
+## 11. 建议执行顺序与结果记录
 
 建议顺序：
 
@@ -700,9 +778,10 @@ python -m pytest -q tests/test_config_recovery.py
 2. 工具：FT-04 至 FT-10、ERR-01。
 3. 安全：SEC-01 至 SEC-05。
 4. Hooks：HOOK-01，然后执行 HOOK-02 至 HOOK-04 的受控集成测试。
-5. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
-6. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
-7. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-05、CFG-03。
+5. 规划：TODO-01 至 TODO-04、TASK-01 至 TASK-04。
+6. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
+7. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
+8. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-05、CFG-03。
 7. 边界：BND-01。
 
 每个用例建议记录：
@@ -717,7 +796,7 @@ python -m pytest -q tests/test_config_recovery.py
 | 偏差 | 与通过标准不一致之处 |
 | 可复现性 | 重试次数及一致性 |
 
-## 11. 覆盖矩阵
+## 12. 覆盖矩阵
 
 | 功能 | 主要用例 |
 |---|---|
@@ -736,6 +815,11 @@ python -m pytest -q tests/test_config_recovery.py
 | Hook 生命周期与上下文注入/输出改写 | HOOK-02 |
 | Hook 阻断与异常 Fail-Closed | HOOK-03 |
 | Stop continuation 防循环 | HOOK-04 |
+| Todo 创建、更新与恢复 | TODO-01、TODO-02 |
+| Todo reminder 与输入校验 | TODO-03、TODO-04 |
+| Task Graph 创建与依赖 | TASK-01 |
+| Task 状态机与解锁 | TASK-02、TASK-04 |
+| Task 跨 Session 持久化 | TASK-03 |
 | Session 原子持久化/恢复 | SES-01、SES-02 |
 | Session 隔离/校验/列表 | SES-03 至 SES-06 |
 | Memory 索引与召回 | MEM-01 至 MEM-03 |
@@ -751,7 +835,7 @@ python -m pytest -q tests/test_config_recovery.py
 | CLI 控制命令 | SES-04、MEM-03、CLI-01 |
 | 未实现能力边界 | BND-01 |
 
-## 12. 已知设计限制与判读注意事项
+## 13. 已知设计限制与判读注意事项
 
 - `bash` 使用系统 shell，并非容器沙箱；50,000 字符输出会被截断，命令超时为 120 秒。
 - 文件读取结果同样最多 50,000 字符；glob 最多返回 1,000 项。这些上限可另做压力测试，但不建议在常规 Prompt 套件中制造大量文件。
@@ -763,10 +847,11 @@ python -m pytest -q tests/test_config_recovery.py
 - `estimate_tokens()` 使用 JSON 字符数除以 4 的近似值，不同语言和 Provider 的真实 token 数会有偏差；CTX-02 必须记录实际阈值。
 - 429、529、`max_tokens` 和 prompt-too-long 若未自然发生，不能记为 PASS；只有对应故障注入测试通过才算完成恢复验收。
 - 自定义 Hook 尚无 CLI/settings 配置入口；HOOK-02 至 HOOK-04 验证的是公开 Python API 与完整 Agent Loop，不应伪装成纯 CLI 黑盒测试。
+- Task Graph 当前没有环检测和跨进程文件锁；验收时不要并行启动多个进程认领同一任务。
 
 发布门槛建议：所有 P0 用例通过；P1 通过率至少 90%；任何安全 P0 失败都应阻止发布。
 
-## 13. 环境恢复与清理
+## 14. 环境恢复与清理
 
 完成 CTX/CFG 专项测试后，先清除本次 PowerShell 进程设置的覆盖变量，避免影响日常使用：
 

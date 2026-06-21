@@ -20,6 +20,7 @@ from .hooks import (
 from .memory import MemoryStore
 from .recovery import RecoveryState, is_prompt_too_long_error, with_retry
 from .session import Session, SessionStore
+from .tasks import TaskStore
 from .tools import ToolRegistry
 
 
@@ -53,7 +54,8 @@ class Agent:
         self.client = client or Anthropic(base_url=settings.base_url)
         self.memory = MemoryStore(settings.data_dir)
         self.sessions = SessionStore(settings.data_dir)
-        self.tools = ToolRegistry(settings.workspace, self.memory, interactive)
+        self.tasks = TaskStore(settings.data_dir)
+        self.tools = ToolRegistry(settings.workspace, self.memory, interactive, self.tasks)
         self.context = ContextManager(settings.data_dir, settings.context_limit)
         self.hooks = hooks or HookManager()
         # Permission is registered first so an extension cannot bypass it by
@@ -61,17 +63,25 @@ class Agent:
         self.hooks.register(PRE_TOOL_USE, permission_hook, prepend=True)
         self.hooks.register(POST_TOOL_USE, large_output_hook)
 
-    def system_prompt(self, query: str) -> str:
+    def system_prompt(self, query: str, session: Session | None = None) -> str:
         index = self.memory.index()
         relevant = self.memory.render_relevant(query)
         memory_section = "\n\nLong-term memory catalog:\n" + index if index else ""
+        todo_section = ""
+        if session and session.todos:
+            todo_section = "\n\nCurrent session todos:\n" + "\n".join(
+                f"- [{todo['status']}] {todo['content']}" for todo in session.todos
+            )
+        task_summary = self.tasks.render()
+        task_section = "" if task_summary == "No tasks." else f"\n\nDurable task graph:\n{task_summary[:4000]}"
         return (
             "You are ZCLI, a personal coding agent. Respond in the user's preferred language. "
             "Use tools to inspect and modify the workspace when needed. Never claim a tool action succeeded "
             "without its result. When the user explicitly asks you to remember a stable preference or fact, "
-            "call the remember tool. Keep answers concise.\n\n"
+            "call the remember tool. For multi-step work, use todo_write and keep statuses current. Use the "
+            "durable task graph for work that must survive sessions or has dependencies. Keep answers concise.\n\n"
             f"Workspace: {self.settings.workspace}"
-            f"{memory_section}\n\n{relevant}"
+            f"{memory_section}{todo_section}{task_section}\n\n{relevant}"
         ).strip()
 
     def run_turn(self, session: Session, query: str, emit: Callable[[str], None] = print) -> str:
@@ -103,6 +113,12 @@ class Agent:
         emitted_text: list[str] = []
         stop_hook_active = False
         while True:
+            if session.rounds_since_todo >= 3:
+                reminder = {"role": "user", "content": "<reminder>Update your todos.</reminder>"}
+                session.messages.append(reminder)
+                turn_messages.append(reminder)
+                session.rounds_since_todo = 0
+                self.sessions.save(session)
             try:
                 prepared, summary = self.context.prepare(
                     session.messages,
@@ -117,7 +133,7 @@ class Agent:
                 response = with_retry(
                     lambda: self.client.messages.create(
                         model=state.current_model,
-                        system=self.system_prompt(query),
+                        system=self.system_prompt(query, session),
                         messages=session.messages,
                         tools=self.tools.definitions,
                         max_tokens=max_tokens,
@@ -220,7 +236,12 @@ class Agent:
                 if pre.blocked:
                     output = pre.reason or "Blocked by PreToolUse hook"
                 else:
-                    output = self.tools.execute(call["name"], tool_input, permission_checked=True)
+                    output = self.tools.execute(
+                        call["name"],
+                        tool_input,
+                        permission_checked=True,
+                        session=session,
+                    )
                     post = self.hooks.trigger(
                         POST_TOOL_USE,
                         HookContext(
@@ -236,6 +257,8 @@ class Agent:
                     )
                     if post.updated_output is not None:
                         output = post.updated_output
+                    if call["name"] != "todo_write":
+                        session.rounds_since_todo += 1
                 emit(f"[{call['name']}] {output[:300]}")
                 compact_output = self.context.persist_large_output(call["id"], output)
                 results.append({"type": "tool_result", "tool_use_id": call["id"], "content": compact_output})

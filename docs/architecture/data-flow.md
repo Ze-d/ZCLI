@@ -7,7 +7,7 @@
   │
   ▼
 cli.py: REPL 循环
-  │ 内置命令? → /exit /memory /sessions → 直接处理
+  │ 内置命令? → /exit /memory /sessions /todos /tasks → 直接处理
   │ 否 → agent.run_turn(session, query)
   ▼
 agent.py: Pre-turn
@@ -17,6 +17,7 @@ agent.py: Pre-turn
   └─ sessions.save(session)        → 原子写盘
   ▼
 agent.py: Tool loop (while True)
+  ├─ rounds_since_todo >= 3? → 注入 Todo reminder
   ├─ context.prepare(messages)
   │   └─ 大结果落盘 → 历史裁剪 → 旧结果压缩 → 必要时摘要
   ├─ recovery.with_retry(...)
@@ -54,11 +55,26 @@ Session 生命周期:
         ▼
   run_turn() 每轮:
     messages 追加 user/assistant/tool_result
+    todos 与 rounds_since_todo 随 Session 保存
     summary 在 compact 时更新
     sessions.save() → 原子写 .zcli/sessions/<id>.json
         │
         ▼
   下次 load_or_create() 自动恢复
+```
+
+## Planning 状态
+
+```text
+Session Todo:
+  .zcli/sessions/<id>.json
+    ├─ todos[]
+    └─ rounds_since_todo
+
+Durable Task Graph:
+  .zcli/tasks/task_<id>.json
+    pending → in_progress → completed
+    blockedBy 全部 completed 后才允许 claim
 ```
 
 ## Memory 存储模型

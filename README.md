@@ -4,7 +4,7 @@
 
 > 你的终端个人编程 Agent
 
-ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、生命周期 Hooks、长期记忆、会话持久化、分层上下文压缩和 API 错误恢复。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
+ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、生命周期 Hooks、TodoWrite、持久化 Task Graph、长期记忆、会话持久化、分层上下文压缩和 API 错误恢复。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
 
 上下文处理参考 `learn-claude-code` 的 s08、s11 和 s20：大工具结果先落盘，再裁剪旧消息和旧工具结果，仍超限时保存完整 transcript 并生成摘要。API 调用支持 429/529 指数退避、529 fallback model、`max_tokens` 扩容与续写，以及 prompt-too-long 后的 reactive compact。
 
@@ -104,6 +104,8 @@ REPL 内置命令：
 | `/exit` `/quit` | 退出 |
 | `/memory` | 查看长期记忆 |
 | `/sessions` | 列出已保存会话 |
+| `/todos` | 查看当前 Session 的 Todo 清单 |
+| `/tasks` | 查看持久化 Task Graph |
 
 ## 构建 & 发布
 
@@ -135,6 +137,7 @@ twine upload dist/*
 
 详细文档见 [docs/](docs/):
 - [架构总览](docs/architecture/overview.md)
+- [TodoWrite 与 Task Graph](docs/architecture/planning-and-tasks.md)
 - [模块职责](docs/architecture/module-map.md)
 - [环境变量](docs/development/env-vars.md)
 - [测试策略](docs/testing/test-strategy.md)

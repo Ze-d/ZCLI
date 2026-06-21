@@ -8,7 +8,7 @@
 │  argparse → Settings → Agent → REPL      │
 ├─────────────────────────────────────────┤
 │  Agent 层 (agent.py)                     │
-│  事件循环 · 工具编排 · 恢复 · 记忆抽取    │
+│  事件循环 · 工具编排 · Todo · 记忆抽取     │
 ├─────────────────────────────────────────┤
 │  Harness 层 (hooks.py / context.py)      │
 │  生命周期 Hook · 分层压缩 · API 错误恢复   │
@@ -29,12 +29,14 @@
 
 ## 核心模式
 
-- **REPL**: 单线程 read-eval-print 循环，支持内置命令 (`/exit` `/memory` `/sessions`)
+- **REPL**: 单线程 read-eval-print 循环，支持 `/exit` `/memory` `/sessions` `/todos` `/tasks`
 - **Tool-use loop**: Agent 在单轮中可多次调用工具，直到 LLM 产出纯文本回复
 - **Context compaction**: 大结果落盘 → 历史裁剪 → 旧工具结果压缩；仍超限才调用 LLM 摘要
 - **Memory extraction**: 每轮结束后 LLM 自动抽取偏好和项目事实持久化
 - **Permission gate**: 所有 bash 命令经过安全策略检查（硬拒绝 + 路径 jail）
 - **Lifecycle hooks**: 输入、工具前后和停止阶段通过可注册 Hook 扩展，权限由默认 PreToolUse Hook 执行
+- **Two-level planning**: Session Todo 管当前步骤；持久 Task Graph 管依赖、认领和跨 Session 进度
 
 分层策略、阈值和协议不变量见 [context-compaction.md](context-compaction.md)。
 Hook 事件和扩展约定见 [hooks.md](hooks.md)。
+两层规划模型见 [planning-and-tasks.md](planning-and-tasks.md)。

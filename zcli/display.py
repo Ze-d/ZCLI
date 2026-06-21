@@ -71,6 +71,7 @@ _CAPABILITIES: Sequence[tuple[str, str]] = [
     ("Chat",         "Multi-turn, tool-use loop, memory injection"),
     ("Memory",       "Auto-extract preferences & facts per turn"),
     ("Session",      "Atomic JSON persistence, multi-session"),
+    ("Planning",     "Session todos + durable dependency task graph"),
     ("Compact",      "Auto-summarize long context"),
     ("Multi-LLM",    "Anthropic / DeepSeek / MiniMax / GLM / Kimi …"),
     ("Sandbox",     "Path jail + hard-deny dangerous commands"),
@@ -108,7 +109,7 @@ def show_banner(settings: Settings, session_id: str, version: str = "0.1.0") -> 
     print()
 
     # ── commands ───────────────────────────────────────────────────
-    print(f"  {bold('Commands')}    /exit  /quit  /memory  /sessions")
+    print(f"  {bold('Commands')}    /exit  /quit  /memory  /sessions  /todos  /tasks")
     print(bright_cyan("─" * min(term_width, 80)))
     print()
 
