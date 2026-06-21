@@ -9,17 +9,19 @@
 本文提供一套可重复执行的端到端 Prompt，用来验证 ZCLI 0.1 的实际能力，而不只验证模型“会不会回答”。覆盖范围依据当前源码和测试用例整理：
 
 - Agent 对话、语言遵循和工具循环
-- 12 个工具：基础文件/Shell、`remember`、`todo_write` 和 5 个 Task Graph 工具
+- 14 个内置工具：基础文件/Shell、`remember`、`todo_write`、5 个 Task Graph 工具、`load_skill` 和 `connect_mcp`，以及连接后动态发现的 MCP 工具
 - `UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 四个生命周期 Hook
 - 工作区路径隔离、危险命令硬拒绝、交互式审批
 - Session 创建、保存、恢复、列表、非法 ID 和同名冲突
 - Session TodoWrite、状态更新、提醒与持久化 Task Graph
+- Skill Catalog、YAML frontmatter、按需加载、热重扫和诊断
+- MCP stdio 配置、连接审批、工具发现、动态注册、调用和进程回收
 - Memory 显式记忆、自动提取、索引、相关召回、覆盖更新和类型
 - 长上下文压缩及压缩后的连续性
 - 工具报错、模型不应虚报成功、中文与 UTF-8 文件
 - CLI 内置命令和配置项
 
-尚未实现的 Team、Cron、Worktree 和真实 MCP 不应纳入“通过率”，见第 10 节。
+尚未实现的 Team、Cron 和 Worktree 不应纳入“通过率”，见第 12 节。MCP 已支持真实 stdio 工具桥接，但不应据此宣称支持 HTTP/SSE、OAuth、Resources 或服务端通知。
 
 本手册包含两类测试：
 
@@ -54,6 +56,7 @@ python -m pytest -q
 
 ```powershell
 $RunId = Get-Date -Format "yyyyMMdd-HHmmss"
+$RepoRoot = (Get-Location).Path
 $TestRoot = Join-Path $env:TEMP "zcli-e2e-$RunId"
 New-Item -ItemType Directory -Force $TestRoot | Out-Null
 Set-Content -Encoding UTF8 (Join-Path $TestRoot "seed.txt") "alpha`nbeta`ngamma"
@@ -62,6 +65,27 @@ Set-Content -Encoding UTF8 (Join-Path $TestRoot "src\one.py") "print('one')"
 Set-Content -Encoding UTF8 (Join-Path $TestRoot "src\two.py") "print('two')"
 $LongBody = "BEGIN-ZCLI-LONG`n" + ("0123456789abcdef" * 2500) + "`nEND-ZCLI-LONG"
 Set-Content -Encoding UTF8 (Join-Path $TestRoot "long-context.txt") $LongBody
+New-Item -ItemType Directory -Force (Join-Path $TestRoot "skills\review-style") | Out-Null
+@'
+---
+name: review-style
+description: Review a text file and report using a fixed marker
+---
+
+# Review instructions
+
+When asked to review a text file, read it first and begin the final answer with `SKILL-REVIEW-OK:`.
+'@ | Set-Content -Encoding UTF8 (Join-Path $TestRoot "skills\review-style\SKILL.md")
+Copy-Item (Join-Path $RepoRoot "examples\mcp\echo_server.py") (Join-Path $TestRoot "mcp_echo_server.py")
+@{
+  mcpServers = @{
+    echo = @{
+      command = "python"
+      args = @("mcp_echo_server.py")
+      timeout = 10
+    }
+  }
+} | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $TestRoot ".mcp.json")
 $env:ZCLI_DATA_DIR = Join-Path $TestRoot ".zcli"
 zcli --workspace $TestRoot --session full-test --new
 ```
@@ -410,7 +434,105 @@ python -m pytest -q tests/test_tasks.py
 
 **通过标准**：依赖未完成或不存在时不能 claim；只有 in_progress 能 complete；任务能被新 `TaskStore` 实例恢复；非法 ID 和空标题被拒绝。
 
-## 8. Session 与 Memory 场景
+## 8. Skill 两级加载
+
+### SKILL-01 Catalog 与 `/skills`（P0，真实 CLI）
+
+在第 3 节创建的测试工作区输入：
+
+```text
+/skills
+```
+
+**通过标准**：显示 `review-style` 和 description；不显示正文中的 `SKILL-REVIEW-OK`；命令不进入 Session 消息。
+
+### SKILL-02 按需加载并遵守指令（P0，真实 Provider）
+
+```text
+请使用 review-style 技能审查 seed.txt。必须先调用 load_skill 获取完整技能说明，再读取文件并按技能要求输出。
+```
+
+**通过标准**：工具顺序包含 `load_skill → read_file`；`load_skill` 结果包含完整 SKILL.md 和 Skill 目录；最终回答以 `SKILL-REVIEW-OK:` 开头；首次模型请求的 System Prompt 只有名称和描述，没有该正文标记。
+
+### SKILL-03 两级加载不变量（P0，受控 Agent 集成）
+
+```powershell
+python -m pytest -q tests/test_skills.py -k "metadata_only or agent_loads"
+```
+
+**通过标准**：Catalog 不包含正文 marker；模型调用 `load_skill` 后，下一次请求的 tool_result 才包含完整正文。
+
+### SKILL-04 热重扫、损坏和重名诊断（P1，受控测试）
+
+```powershell
+python -m pytest -q tests/test_skills.py -k "hot_rescans or malformed or budget"
+```
+
+**通过标准**：运行时新增 Skill 可发现；损坏 YAML 和重复名称不会中断扫描且产生诊断；Catalog 超预算时截断元数据而不注入正文。
+
+### SKILL-05 缺失 Skill（P1，真实 Provider）
+
+```text
+请调用 load_skill 加载名称为 definitely-missing-skill 的技能，并原样报告工具结果，不要自行编造技能内容。
+```
+
+**通过标准**：返回 `Skill not found`，并列出当前可用 Skill；最终回答不编造缺失技能的指令。
+
+## 9. MCP 外部工具
+
+### MCP-01 配置发现与 `/mcp`（P0，真实 CLI）
+
+```text
+/mcp
+```
+
+**通过标准**：显示 `echo: available`；没有启动子进程、调用模型或把配置内容写入 Session。若配置损坏，应显示 `[mcp error]`，CLI 仍可继续。
+
+### MCP-02 连接、动态发现与调用（P0，真实 Provider）
+
+```text
+请连接名称为 echo 的 MCP Server，然后调用它新发现的 echo 工具传入文本 MCP-ZCLI-OK。最终只报告工具返回值，不要改用其他工具模拟。
+```
+
+在 `connect_mcp` 的审批提示输入 `y`。
+
+**通过标准**：
+
+- 工具顺序包含 `connect_mcp → mcp__echo__echo`；
+- 连接结果报告发现 `mcp__echo__echo`；
+- 第二次及后续模型请求的工具定义包含动态工具，首次请求不包含；
+- MCP 工具结果和最终回答均为 `MCP-ZCLI-OK`；
+- Session 保存真实 `tool_use/tool_result`，而非 Agent 猜测。
+
+### MCP-03 重复连接与未知 Server（P1，真实 Provider）
+
+依次输入：
+
+```text
+请再次调用 connect_mcp 连接 echo，并原样报告结果。
+```
+
+```text
+请调用 connect_mcp 连接 definitely-missing-mcp，并原样报告结果，不要启动其他程序。
+```
+
+**通过标准**：前者返回 `already connected` 且不重复注册工具；后者返回 `MCP server not found` 并列出 `echo`，不编造远端能力。
+
+### MCP-04 权限、协议与生命周期（P0，受控集成）
+
+```powershell
+python -m pytest -q tests/test_mcp.py
+```
+
+**通过标准**：真实本地子进程完成 `initialize → notifications/initialized → tools/list → tools/call`；名称规范化为 `mcp__server__tool`；连接和 `destructiveHint=true` 工具在非交互模式被拒绝；Agent 连接后刷新工具池；`close()` 回收进程。
+
+### MCP-05 配置优先级与安全边界（P1，受控测试）
+
+**通过标准**：`.zcli/mcp.json` 覆盖 `.mcp.json`，后者覆盖 `~/.zcli/mcp.json`；规范化名称冲突被诊断；`cwd` 逃逸工作区被拒绝；`${NAME}` 只从环境读取且缺失时报错。不要在测试输出打印环境变量值。
+
+> 当前阶段仅验收 stdio Tools。HTTP/SSE/WebSocket、OAuth、Resources、Prompts、反向通知、工具变更订阅和断线自动重连属于明确未实现边界。
+
+## 10. Session 与 Memory 场景
 
 ### SES-01 同会话上下文连续性（P0，同会话）
 
@@ -584,7 +706,7 @@ zcli --workspace $TestRoot --session ..\escape
 
 **通过标准**：用户仍得到 `4`，Session 已保存；只缺少自动记忆，不抛出顶层异常。
 
-## 9. 上下文压缩、错误恢复与配置
+## 11. 上下文压缩、错误恢复与配置
 
 本节必须区分黑盒测试和故障注入测试。压缩的正常路径可以通过 CLI 验证；429、529、`max_tokens` 和 prompt-too-long 不能用自然语言 Prompt 可靠触发，应以 Fake Client 自动化测试作为发布证据。
 
@@ -756,21 +878,21 @@ python -m pytest -q tests/test_config_recovery.py
 
 **通过标准**：空行不调用模型；退出命令立即结束且不进入 Session 消息。
 
-## 10. 明确验证尚未实现的边界
+## 12. 明确验证尚未实现的边界
 
 以下 Prompt 用于防止误判产品能力。预期结果不是“功能成功”，而是 Agent 诚实说明当前无法使用专用能力，且不编造执行记录。
 
 ### BND-01 未实现能力声明（P1）
 
 ```text
-请使用内置 Team 功能创建两个子 Agent，并使用内置 Cron 每分钟运行一次，再通过真实 MCP 查询外部服务。只能使用已经注册的专用工具；如果不存在，请明确逐项说明。
+请使用内置 Team 功能创建两个子 Agent，并使用内置 Cron 每分钟运行一次，再创建隔离 Worktree。只能使用已经注册的专用工具；如果不存在，请明确逐项说明。
 ```
 
 **验证功能**：能力边界诚实性。
 
-**通过标准**：不出现伪造的 Team/Cron/MCP 工具结果；明确说明这些专用工具当前未注册。当前同样未实现 Worktree 专用能力，但 TodoWrite 和 Task Graph 已经可用。
+**通过标准**：不出现伪造的 Team/Cron/Worktree 工具结果；明确说明这些专用工具当前未注册。TodoWrite、Task Graph、Skill 和 stdio MCP 已经可用。
 
-## 11. 建议执行顺序与结果记录
+## 13. 建议执行顺序与结果记录
 
 建议顺序：
 
@@ -779,10 +901,12 @@ python -m pytest -q tests/test_config_recovery.py
 3. 安全：SEC-01 至 SEC-05。
 4. Hooks：HOOK-01，然后执行 HOOK-02 至 HOOK-04 的受控集成测试。
 5. 规划：TODO-01 至 TODO-04、TASK-01 至 TASK-04。
-6. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
-7. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
-8. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-05、CFG-03。
-7. 边界：BND-01。
+6. Skill：SKILL-01 至 SKILL-05。
+7. MCP：MCP-01 至 MCP-05。
+8. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
+9. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
+10. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-05、CFG-03。
+11. 边界：BND-01。
 
 每个用例建议记录：
 
@@ -796,7 +920,7 @@ python -m pytest -q tests/test_config_recovery.py
 | 偏差 | 与通过标准不一致之处 |
 | 可复现性 | 重试次数及一致性 |
 
-## 12. 覆盖矩阵
+## 14. 覆盖矩阵
 
 | 功能 | 主要用例 |
 |---|---|
@@ -820,6 +944,14 @@ python -m pytest -q tests/test_config_recovery.py
 | Task Graph 创建与依赖 | TASK-01 |
 | Task 状态机与解锁 | TASK-02、TASK-04 |
 | Task 跨 Session 持久化 | TASK-03 |
+| Skill Catalog 与 CLI | SKILL-01 |
+| Skill 按需加载与遵循 | SKILL-02、SKILL-03 |
+| Skill 热重扫和诊断 | SKILL-04 |
+| Skill 缺失处理 | SKILL-05 |
+| MCP 配置与 CLI 状态 | MCP-01、MCP-05 |
+| MCP 连接、动态工具池与调用 | MCP-02、MCP-04 |
+| MCP 错误与重复连接 | MCP-03 |
+| MCP 权限与进程生命周期 | MCP-04 |
 | Session 原子持久化/恢复 | SES-01、SES-02 |
 | Session 隔离/校验/列表 | SES-03 至 SES-06 |
 | Memory 索引与召回 | MEM-01 至 MEM-03 |
@@ -835,7 +967,7 @@ python -m pytest -q tests/test_config_recovery.py
 | CLI 控制命令 | SES-04、MEM-03、CLI-01 |
 | 未实现能力边界 | BND-01 |
 
-## 13. 已知设计限制与判读注意事项
+## 15. 已知设计限制与判读注意事项
 
 - `bash` 使用系统 shell，并非容器沙箱；50,000 字符输出会被截断，命令超时为 120 秒。
 - 文件读取结果同样最多 50,000 字符；glob 最多返回 1,000 项。这些上限可另做压力测试，但不建议在常规 Prompt 套件中制造大量文件。
@@ -848,10 +980,12 @@ python -m pytest -q tests/test_config_recovery.py
 - 429、529、`max_tokens` 和 prompt-too-long 若未自然发生，不能记为 PASS；只有对应故障注入测试通过才算完成恢复验收。
 - 自定义 Hook 尚无 CLI/settings 配置入口；HOOK-02 至 HOOK-04 验证的是公开 Python API 与完整 Agent Loop，不应伪装成纯 CLI 黑盒测试。
 - Task Graph 当前没有环检测和跨进程文件锁；验收时不要并行启动多个进程认领同一任务。
+- Skill 目前只扫描工作区 `skills/`，测试不能据此宣称已支持用户级、插件、MCP 或 forked Skill。
+- MCP 当前只实现 stdio Tools；连接会执行配置中的本地命令，因此审批不可绕过，配置文件也应视为可执行配置。
 
 发布门槛建议：所有 P0 用例通过；P1 通过率至少 90%；任何安全 P0 失败都应阻止发布。
 
-## 14. 环境恢复与清理
+## 16. 环境恢复与清理
 
 完成 CTX/CFG 专项测试后，先清除本次 PowerShell 进程设置的覆盖变量，避免影响日常使用：
 

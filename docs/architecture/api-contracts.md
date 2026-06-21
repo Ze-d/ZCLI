@@ -24,6 +24,8 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 | `/sessions` | 列出已保存会话 |
 | `/todos` | 显示当前 Session Todo |
 | `/tasks` | 显示持久 Task Graph |
+| `/skills` | 显示 Skill Catalog 和扫描诊断 |
+| `/mcp` | 显示 MCP 配置、连接状态和工具数量 |
 
 ## 配置契约
 
@@ -50,6 +52,7 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 
 ### `ToolRegistry.execute(name, arguments) -> str`
 
-- 12 个工具：`bash`, `read_file`, `write_file`, `edit_file`, `glob`, `remember`, `todo_write`, `create_task`, `list_tasks`, `get_task`, `claim_task`, `complete_task`
+- 14 个内置工具：`bash`, `read_file`, `write_file`, `edit_file`, `glob`, `remember`, `todo_write`, `create_task`, `list_tasks`, `get_task`, `claim_task`, `complete_task`, `load_skill`, `connect_mcp`
+- 连接后动态增加 `mcp__<server>__<tool>` 工具；定义来自远端 `tools/list`
 - 所有工具返回字符串（成功消息或错误信息）
-- bash/文件工具受 `PermissionPolicy` 约束
+- bash/文件工具、MCP 连接和 destructive MCP 工具受 `PermissionPolicy` 约束

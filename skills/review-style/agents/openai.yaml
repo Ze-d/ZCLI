@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Style"
+  short_description: "Review text files with a fixed verification marker"
+  default_prompt: "Use review-style to review a text file and report findings."

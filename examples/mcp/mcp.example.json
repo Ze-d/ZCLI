@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "echo": {
+      "command": "python",
+      "args": ["examples/mcp/echo_server.py"],
+      "timeout": 30
+    }
+  }
+}

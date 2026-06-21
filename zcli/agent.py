@@ -18,8 +18,10 @@ from .hooks import (
     permission_hook,
 )
 from .memory import MemoryStore
+from .mcp import MCPManager
 from .recovery import RecoveryState, is_prompt_too_long_error, with_retry
 from .session import Session, SessionStore
+from .skills import SkillRegistry
 from .tasks import TaskStore
 from .tools import ToolRegistry
 
@@ -55,7 +57,16 @@ class Agent:
         self.memory = MemoryStore(settings.data_dir)
         self.sessions = SessionStore(settings.data_dir)
         self.tasks = TaskStore(settings.data_dir)
-        self.tools = ToolRegistry(settings.workspace, self.memory, interactive, self.tasks)
+        self.skills = SkillRegistry(settings.workspace / "skills")
+        self.mcp = MCPManager(settings.workspace)
+        self.tools = ToolRegistry(
+            settings.workspace,
+            self.memory,
+            interactive,
+            self.tasks,
+            self.skills,
+            self.mcp,
+        )
         self.context = ContextManager(settings.data_dir, settings.context_limit)
         self.hooks = hooks or HookManager()
         # Permission is registered first so an extension cannot bypass it by
@@ -74,6 +85,13 @@ class Agent:
             )
         task_summary = self.tasks.render()
         task_section = "" if task_summary == "No tasks." else f"\n\nDurable task graph:\n{task_summary[:4000]}"
+        skill_catalog = self.skills.catalog()
+        skill_section = (
+            "\n\nSkills catalog:\n"
+            f"{skill_catalog}\n"
+            "When a skill is relevant, call load_skill(name) before following its instructions."
+        )
+        mcp_section = "\n\n" + self.mcp.status()
         return (
             "You are ZCLI, a personal coding agent. Respond in the user's preferred language. "
             "Use tools to inspect and modify the workspace when needed. Never claim a tool action succeeded "
@@ -81,8 +99,11 @@ class Agent:
             "call the remember tool. For multi-step work, use todo_write and keep statuses current. Use the "
             "durable task graph for work that must survive sessions or has dependencies. Keep answers concise.\n\n"
             f"Workspace: {self.settings.workspace}"
-            f"{memory_section}{todo_section}{task_section}\n\n{relevant}"
+            f"{memory_section}{todo_section}{task_section}{skill_section}{mcp_section}\n\n{relevant}"
         ).strip()
+
+    def close(self) -> None:
+        self.mcp.close()
 
     def run_turn(self, session: Session, query: str, emit: Callable[[str], None] = print) -> str:
         submit = self.hooks.trigger(

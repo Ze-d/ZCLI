@@ -24,43 +24,59 @@ def main(argv: list[str] | None = None) -> int:
     agent = Agent(settings)
 
     if args.list_sessions:
-        for session in agent.sessions.list():
-            print(f"{session.id}\t{session.updated_at}\t{len(session.messages)} messages")
-        return 0
+        try:
+            for session in agent.sessions.list():
+                print(f"{session.id}\t{session.updated_at}\t{len(session.messages)} messages")
+            return 0
+        finally:
+            agent.close()
 
     session = agent.sessions.create(args.session) if args.new else agent.sessions.load_or_create(args.session)
     show_banner(settings, session.id, __version__)
-    while True:
-        try:
-            query = input("zcli >> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not query:
-            continue
-        if query in {"/exit", "/quit"}:
-            break
-        if query == "/memory":
-            print(agent.memory.index() or "(no memories)")
-            continue
-        if query == "/sessions":
-            for item in agent.sessions.list():
-                print(f"{item.id}\t{item.updated_at}")
-            continue
-        if query == "/todos":
-            if not session.todos:
-                print("(no todos)")
-            else:
-                for todo in session.todos:
-                    print(f"[{todo['status']}] {todo['content']}")
-            continue
-        if query == "/tasks":
-            print(agent.tasks.render())
-            continue
-        try:
-            agent.run_turn(session, query)
-        except Exception as exc:
-            print(f"Error: {type(exc).__name__}: {exc}")
+    try:
+        while True:
+            try:
+                query = input("zcli >> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not query:
+                continue
+            if query in {"/exit", "/quit"}:
+                break
+            if query == "/memory":
+                print(agent.memory.index() or "(no memories)")
+                continue
+            if query == "/sessions":
+                for item in agent.sessions.list():
+                    print(f"{item.id}\t{item.updated_at}")
+                continue
+            if query == "/todos":
+                if not session.todos:
+                    print("(no todos)")
+                else:
+                    for todo in session.todos:
+                        print(f"[{todo['status']}] {todo['content']}")
+                continue
+            if query == "/tasks":
+                print(agent.tasks.render())
+                continue
+            if query == "/skills":
+                print(agent.skills.catalog())
+                for error in agent.skills.errors:
+                    print(f"[skill error] {error}")
+                continue
+            if query == "/mcp":
+                print(agent.mcp.status())
+                for error in agent.mcp.errors:
+                    print(f"[mcp error] {error}")
+                continue
+            try:
+                agent.run_turn(session, query)
+            except Exception as exc:
+                print(f"Error: {type(exc).__name__}: {exc}")
+    finally:
+        agent.close()
     return 0
 
 

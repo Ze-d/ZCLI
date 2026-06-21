@@ -36,3 +36,10 @@ class PermissionPolicy:
                 return "denied by user"
         return None
 
+    def confirm_action(self, description: str) -> str | None:
+        if not self.interactive:
+            return "action requires interactive approval"
+        answer = input(f"Potentially sensitive action:\n  {description}\nAllow? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            return "denied by user"
+        return None
