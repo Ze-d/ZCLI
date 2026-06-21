@@ -9,6 +9,7 @@ ZCLI 是一个轻量级个人编程 Agent，运行在终端中，具备多轮对
 | 整体架构 | [architecture/overview.md](architecture/overview.md) |
 | 模块与职责 | [architecture/module-map.md](architecture/module-map.md) |
 | 数据流 & 状态流转 | [architecture/data-flow.md](architecture/data-flow.md) |
+| 分层上下文压缩 | [architecture/context-compaction.md](architecture/context-compaction.md) |
 | 环境搭建 | [development/setup.md](development/setup.md) |
 | 常用命令 | [development/commands.md](development/commands.md) |
 | 环境变量 | [development/env-vars.md](development/env-vars.md) |
@@ -22,4 +23,4 @@ ZCLI 是一个轻量级个人编程 Agent，运行在终端中，具备多轮对
 - **包管理**: setuptools + pip editable install
 - **核心依赖**: `anthropic` `python-dotenv` `pyyaml`
 - **入口**: `zcli` 命令 / `python -m zcli`
-- **测试**: pytest, 10 个测试覆盖核心路径
+- **测试**: pytest，覆盖 Agent、Memory、Session、工具、压缩和错误恢复核心路径

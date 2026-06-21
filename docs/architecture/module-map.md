@@ -5,7 +5,9 @@
 | CLI 入口 | `zcli/cli.py` | 参数解析、会话选择、REPL 循环 | `main()`, `build_parser()` |
 | `__main__` | `zcli/__main__.py` | `python -m zcli` 支持 | 调用 `main()` |
 | 包标识 | `zcli/__init__.py` | 版本号 | `__version__ = "0.1.0"` |
-| Agent 核心 | `zcli/agent.py` | LLM 编排、工具循环、压缩、记忆抽取 | `Agent.run_turn()` |
+| Agent 核心 | `zcli/agent.py` | LLM 编排、工具循环、记忆抽取 | `Agent.run_turn()` |
+| 上下文管理 | `zcli/context.py` | 分层压缩、大结果与 transcript 持久化 | `ContextManager` |
+| 错误恢复 | `zcli/recovery.py` | 429/529 重试、fallback、超限识别 | `RecoveryState`, `with_retry()` |
 | 配置 | `zcli/config.py` | 环境变量 / .env 加载 | `Settings` (frozen dataclass) |
 | 会话存储 | `zcli/session.py` | JSON 持久化、CRUD、原子写 | `Session`, `SessionStore` |
 | 长期记忆 | `zcli/memory.py` | Markdown+YAML 文件存储、索引、检索 | `MemoryStore` |
@@ -19,6 +21,8 @@
 cli.py ──→ agent.py ──→ session.py
            │              memory.py
            │              tools.py ──→ permissions.py
+           ├── context.py
+           ├── recovery.py
            └── config.py
            └── display.py
 ```

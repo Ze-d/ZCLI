@@ -8,7 +8,10 @@
 │  argparse → Settings → Agent → REPL      │
 ├─────────────────────────────────────────┤
 │  Agent 层 (agent.py)                     │
-│  事件循环 · 工具编排 · 压缩 · 记忆抽取    │
+│  事件循环 · 工具编排 · 恢复 · 记忆抽取    │
+├─────────────────────────────────────────┤
+│  Context 层 (context.py / recovery.py)   │
+│  分层压缩 · transcript · API 错误恢复     │
 ├─────────────────────────────────────────┤
 │  存储 & 工具层                            │
 │  session.py  memory.py  tools.py         │
@@ -28,6 +31,8 @@
 
 - **REPL**: 单线程 read-eval-print 循环，支持内置命令 (`/exit` `/memory` `/sessions`)
 - **Tool-use loop**: Agent 在单轮中可多次调用工具，直到 LLM 产出纯文本回复
-- **Context compaction**: 消息数 ≥ 8 且估算 token 超限时，自动摘要旧消息
+- **Context compaction**: 大结果落盘 → 历史裁剪 → 旧工具结果压缩；仍超限才调用 LLM 摘要
 - **Memory extraction**: 每轮结束后 LLM 自动抽取偏好和项目事实持久化
 - **Permission gate**: 所有 bash 命令经过安全策略检查（硬拒绝 + 路径 jail）
+
+分层策略、阈值和协议不变量见 [context-compaction.md](context-compaction.md)。

@@ -31,3 +31,22 @@ def test_recovery_settings_load_from_project_config(tmp_path, monkeypatch):
     assert settings.escalated_max_tokens == 2000
     assert settings.max_retries == 4
     assert settings.max_recovery_retries == 3
+
+
+def test_environment_overrides_project_recovery_config(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    config_dir = workspace / ".zcli"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.env").write_text(
+        "FALLBACK_MODEL_ID=project-model\nZCLI_MAX_RETRIES=4\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("FALLBACK_MODEL_ID", "environment-model")
+    monkeypatch.setenv("ZCLI_MAX_RETRIES", "7")
+    monkeypatch.delenv("ZCLI_DATA_DIR", raising=False)
+
+    settings = Settings.load(workspace)
+
+    assert settings.fallback_model == "environment-model"
+    assert settings.max_retries == 7

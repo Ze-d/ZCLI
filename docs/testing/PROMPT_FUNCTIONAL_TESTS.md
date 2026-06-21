@@ -1,4 +1,8 @@
-# ZCLI 全功能 Prompt 验证手册
+# ZCLI 端到端 Prompt 验证手册
+
+> 最后校准：2026-06-21　适用版本：当前 `main` 分支
+>
+> 本文是发布前人工验收的执行基线。若源码行为发生变化，应在同一提交中更新本文、自动化测试和覆盖矩阵。
 
 ## 1. 目的与范围
 
@@ -15,6 +19,11 @@
 
 尚未实现的 Team、Cron、Task Graph、Worktree 和真实 MCP 不应纳入“通过率”，见第 8 节。
 
+本手册包含两类测试：
+
+- **真实 Provider 黑盒测试**：从 `zcli` CLI 输入 Prompt，观察工具轨迹与磁盘结果。
+- **受控故障注入测试**：429、529、`max_tokens`、prompt-too-long 等无法靠普通 Prompt 稳定制造，必须使用 Fake Client 或测试代理，不得把“本次没有遇到错误”记作通过。
+
 ## 2. 测试原则
 
 每个用例应同时观察三层结果：
@@ -27,22 +36,36 @@
 
 模型输出具有随机性。建议每个模型配置至少完整执行一次，关键安全用例执行三次。若模型没有按要求调用工具，先原样重试一次；仍失败则记录为 Agent/模型协同失败，不要手工替它完成。
 
+执行前先跑自动化基线：
+
+```powershell
+cd C:\02-study\MyProjects\ZCLI
+python -m pytest -q
+```
+
+自动化测试失败时，不应继续把人工 Prompt 结果作为发布通过依据。
+
 ## 3. 测试环境准备
 
 建议在独立目录运行，避免污染项目本身：
 
 ```powershell
-$TestRoot = Join-Path $env:TEMP "zcli-e2e"
+$RunId = Get-Date -Format "yyyyMMdd-HHmmss"
+$TestRoot = Join-Path $env:TEMP "zcli-e2e-$RunId"
 New-Item -ItemType Directory -Force $TestRoot | Out-Null
 Set-Content -Encoding UTF8 (Join-Path $TestRoot "seed.txt") "alpha`nbeta`ngamma"
 New-Item -ItemType Directory -Force (Join-Path $TestRoot "src") | Out-Null
 Set-Content -Encoding UTF8 (Join-Path $TestRoot "src\one.py") "print('one')"
 Set-Content -Encoding UTF8 (Join-Path $TestRoot "src\two.py") "print('two')"
+$LongBody = "BEGIN-ZCLI-LONG`n" + ("0123456789abcdef" * 2500) + "`nEND-ZCLI-LONG"
+Set-Content -Encoding UTF8 (Join-Path $TestRoot "long-context.txt") $LongBody
 $env:ZCLI_DATA_DIR = Join-Path $TestRoot ".zcli"
 zcli --workspace $TestRoot --session full-test --new
 ```
 
 前提：已正确配置 `ANTHROPIC_API_KEY`、`MODEL_ID`，必要时配置 `ANTHROPIC_BASE_URL`。如果 `full-test` 已存在，换一个会话名或清理本次专用测试目录。
+
+每次运行使用带时间戳的新目录，避免旧 Session、Memory 或 transcript 造成假通过。不要把 API Key、完整请求头或包含密钥的 `.env` 内容复制进测试报告。
 
 用例标记：
 
@@ -51,6 +74,18 @@ zcli --workspace $TestRoot --session full-test --new
 - `P2`：健壮性和体验验证。
 - `同会话`：必须连续在同一个 ZCLI 进程/Session 中输入。
 - `新会话`：需退出后以指定 Session 重启。
+
+常用证据检查命令：
+
+```powershell
+# Session 必须是合法 JSON
+Get-Content "$env:ZCLI_DATA_DIR\sessions\full-test.json" -Raw | ConvertFrom-Json | Format-List
+
+# 查看长期记忆、压缩前 transcript 和大型工具输出
+Get-ChildItem "$env:ZCLI_DATA_DIR\memory" -Force
+Get-ChildItem "$env:ZCLI_DATA_DIR\transcripts" -Force
+Get-ChildItem "$env:ZCLI_DATA_DIR\tool-results" -Force
+```
 
 ## 4. 核心 Prompt 用例
 
@@ -158,7 +193,7 @@ zcli --workspace $TestRoot --session full-test --new
 ### FT-10 多工具综合任务（P0）
 
 ```text
-请完成以下任务：先查找 zcli 下所有 .py 文件，逐个读取；然后创建 reports/python-files.md，第一行是“# Python files”，之后按文件名排序记录每个文件的相对路径和完整内容。写完后重新读取报告并检查是否遗漏。只有验证成功后才说完成。
+请完成以下任务：先查找 src 下所有 .py 文件并逐个读取；然后创建 reports/python-files.md，第一行是“# Python files”，之后按文件名排序记录每个文件的相对路径和完整内容。写完后重新读取报告并检查是否遗漏。只有验证成功后才说完成。
 ```
 
 **验证功能**：规划能力、`glob/read_file/write_file` 多工具循环、结果验证、顺序和内容整合。
@@ -227,7 +262,7 @@ Set-Content (Join-Path $TestRoot "disposable.txt") "safe to delete"
 
 **通过标准**：命令实际执行；`disposable.txt` 被删除；Agent 根据工具结果报告完成。此用例只允许删除明确创建的一次性文件。
 
-### SEC-06 非交互模式的 ASK 命令（P1，建议自动化验证）todo:此处逃逸
+### SEC-06 非交互模式的 ASK 命令（P1，受控测试）
 
 CLI 默认是交互模式，普通 Prompt 无法覆盖 `interactive=False`。可由现有单元测试或新增集成脚本构造 `Agent(..., interactive=False)`，再给 Agent：
 
@@ -238,6 +273,12 @@ CLI 默认是交互模式，普通 Prompt 无法覆盖 `interactive=False`。可
 **验证功能**：无人值守时需审批命令应直接拒绝。
 
 **通过标准**：返回 `Permission denied: command requires interactive approval`，没有执行 push。
+
+执行证据：
+
+```powershell
+python -m pytest -q tests/test_permissions.py
+```
 
 > 已知边界：路径隔离只用于 `read_file/write_file/edit_file`；`bash` 并没有通用的文件系统沙箱，只依赖命令正则策略。因此不要把 SEC-01/02 的通过误解为 shell 也无法访问工作区外部。
 
@@ -417,82 +458,140 @@ zcli --workspace $TestRoot --session ..\escape
 
 ## 7. 上下文压缩、错误恢复与配置
 
-### CTX-01 触发上下文压缩并保持连续性（P0）
+本节必须区分黑盒测试和故障注入测试。压缩的正常路径可以通过 CLI 验证；429、529、`max_tokens` 和 prompt-too-long 不能用自然语言 Prompt 可靠触发，应以 Fake Client 自动化测试作为发布证据。
 
-**触发条件**：消息数 ≥ 8 **且** `estimate_size(messages) > context_limit`。
-其中 `estimate_size = len(json.dumps(messages)) // 4`，因此 `context_limit=200` 约需 800+ 字节 JSON。
-压缩检查在**每条 assistant 响应保存后**立即执行，确保第 4 轮（8 条消息时）触发。
+### CTX-01 大工具结果落盘（P0，真实 Provider）
 
-用独立数据目录和较小阈值启动：
+使用第 3 节创建的 `long-context.txt`，保持默认 `persist_threshold=30000`，输入：
+
+```text
+请读取 long-context.txt，确认第一行和最后一行的标记。必须调用 read_file，但不要在最终回答中复述中间的大段内容。
+```
+
+**验证功能**：`Agent.run_turn()` 在工具结果进入 Session 前调用 `persist_large_output()`。
+
+**通过标准**：
+
+- 出现 `[read_file]` 工具记录；
+- `$env:ZCLI_DATA_DIR/tool-results/` 下新增以 tool-use ID 命名的 `.txt`；
+- 文件包含 `BEGIN-ZCLI-LONG`、`END-ZCLI-LONG` 和完整正文；
+- Session 中对应 `tool_result.content` 是 `<persisted-output>`，包含路径与前 2,000 字符预览，而不是完整 40KB 正文；
+- 最终回答正确识别首尾标记。
+
+### CTX-02 四层顺序与完整摘要（P0，真实 Provider）
+
+不要使用过低阈值。若阈值小于摘要自身大小，每次模型调用前可能再次压缩，无法形成稳定验收。使用独立数据目录和 500 token 阈值；大型输出的 2,000 字符预览通常足以触发，而摘要通常能回落到阈值内：
 
 ```powershell
-$env:ZCLI_CONTEXT_LIMIT = "200"
+$env:ZCLI_CONTEXT_LIMIT = "500"
 $env:ZCLI_DATA_DIR = Join-Path $TestRoot ".zcli-compact"
 zcli --workspace $TestRoot --session compact --new
 ```
 
-然后依次输入以下 Prompt（建议每条等模型回答后再发下一条）：
+输入：
 
 ```text
-长期任务背景：我们正在设计一个名为 Aurora 的命令行工具，语言是 Python，入口文件计划为 aurora.py，核心约束是严格离线运行，绝不能连接任何网络。请复述这些信息，不要写文件。
+请读取 long-context.txt。请记住首行 BEGIN-ZCLI-LONG 和末行 END-ZCLI-LONG 的对应关系，然后只用一句中文回答“已读取”，不要复述正文。
 ```
 
-```text
-补充决定：Aurora 的配置格式使用 YAML（文件命名 convention 为 aurora.yaml），错误码 12 专门表示配置无效或不完整。请把目前所有决定整理为清晰的四点，不要写文件。
-```
+工具结果在进入下一次模型调用前会先做大结果落盘；剩余上下文若仍超过 500 token，才生成 LLM 摘要。
 
-```text
-再补充一条：Aurora 的日志默认写入 stderr 流，默认日志级别设为 INFO 而非 DEBUG。请整理所有目前已有的决定，不要写文件。
-```
-
-```text
-现在请完整列出 Aurora 的全部规格——包括名称、语言、入口文件、联网约束、配置格式、错误码 12 的含义、日志目标流和默认日志级别这八项信息。
-```
-
-**验证功能**：尺寸估算、超过阈值后的摘要请求、消息裁剪、摘要持久化、压缩后继续对话。
+**验证功能**：`tool_result_budget → snip_compact → micro_compact → estimate_tokens → compact_history` 的顺序、摘要与 transcript 持久化。
 
 **通过标准**：
-- `.zcli-compact/sessions/compact.json` 的 `summary` 非空
-- 消息列表中出现 `<session_summary>` 标签
-- 最终回答八项信息全部正确
-- 不存在 Anthropic 消息角色/工具配对错误
-- （可选）压缩后文件大小明显小于未压缩的 `default.json`
 
-### CTX-02 压缩后跨进程恢复（P1）
+- `.zcli-compact/transcripts/compact_*.jsonl` 存在，包含压缩前消息；
+- `.zcli-compact/sessions/compact.json` 的 `summary` 非空；
+- Session 当前消息包含 `[Compacted]` 摘要，并能继续得到最终回答；
+- `.zcli-compact/tool-results/` 中保留完整工具输出；
+- 终端没有消息角色或 `tool_use/tool_result` 配对错误。
 
-完成 CTX-01 后退出并重新打开 `compact`，输入：
+> 不同 Provider 的摘要长度不同。如果摘要自身持续超限，将阈值逐步提高到 700–1,200；如果未触发，则逐步降低，但不建议低于 300。记录实际阈值和 Provider。
 
-```text
-不用猜测，请根据保存的会话总结告诉我：错误码 12 是什么含义，日志默认写到哪里？
+### CTX-03 压缩后跨进程恢复（P0，真实 Provider）
+
+完成 CTX-02 后输入 `/exit`，重新打开同一 Session：
+
+```powershell
+zcli --workspace $TestRoot --session compact
 ```
 
-**验证功能**：压缩摘要落盘后可恢复。
+输入：
 
-**通过标准**：回答“配置无效”和 `stderr`。
+```text
+不用重新读取文件，请根据保存的会话摘要告诉我 long-context.txt 的首行和末行标记。
+```
 
-### ERR-01 读取不存在的文件（P0）
+**通过标准**：回答包含 `BEGIN-ZCLI-LONG` 和 `END-ZCLI-LONG`；Session JSON 可解析；没有重新调用 `read_file`。
+
+### CTX-04 历史裁剪和旧工具结果压缩（P1，受控夹具）
+
+自然对话制造 50 条以上消息成本高且不稳定。本项以自动化测试作为权威证据：
+
+```powershell
+python -m pytest -q tests/test_context.py
+```
+
+**验证功能与通过标准**：
+
+- `snip_compact()` 超过 50 条消息时插入 `[snipped N messages]`；
+- 裁剪边界不会产生孤立 `tool_result`；
+- `micro_compact()` 仅压缩最近 3 个之前的大工具结果；
+- `tool_result_budget()` 从最大的结果开始落盘，直到回到预算内；
+- `prepare()` 的调用顺序严格为 budget、snip、micro、summary；
+- compact/reactive compact 均保存 transcript。
+
+### CTX-05 Reactive compact（P0，故障注入）
+
+真实 Provider 不保证能稳定返回 prompt-too-long。运行：
+
+```powershell
+python -m pytest -q tests/test_agent.py -k prompt_too_long
+```
+
+**通过标准**：第一次主调用抛 `context_length_exceeded`；Agent 只执行一次 reactive compact；生成 `reactive_*.jsonl`；保留恢复摘要和最近消息；第二次主调用成功。
+
+### ERR-01 读取不存在的文件（P0，真实 Provider）
 
 ```text
 请读取 missing-file-404.txt。如果不存在，请根据工具的真实错误说明失败原因，不要创建它。
 ```
 
-**验证功能**：工具异常包装、Agent 基于失败结果回答。
-
 **通过标准**：工具结果包含 `Error: FileNotFoundError`；未创建文件；最终回答不虚报。
 
-### ERR-02 未知工具（P2，需 Fake Client）
+### ERR-02 429 重试（P0，故障注入）
 
-普通模型只能看到已注册工具，无法稳定要求其调用未知工具。让 Fake Client 返回 `tool_use(name="does_not_exist")`，用户 Prompt 可为：
-
-```text
-执行测试动作并报告结果。
+```powershell
+python -m pytest -q tests/test_recovery.py -k 429
 ```
 
-**验证功能**：`ToolRegistry.execute` 未知工具分支。
+**通过标准**：前两次 429 被识别为瞬时错误，执行指数退避路径，第三次成功；测试替换 `sleep`，不会真实等待。
 
-**通过标准**：工具结果为 `Error: unknown tool does_not_exist`，结果被写入 Session，Agent 可继续下一轮模型调用。
+### ERR-03 连续 529 与 Fallback Model（P0，故障注入）
 
-### CFG-01 指定工作区（P0）
+```powershell
+python -m pytest -q tests/test_recovery.py -k 529
+```
+
+**通过标准**：连续两次 overloaded/529 后，`RecoveryState.current_model` 切换到 `FALLBACK_MODEL_ID`，后续调用使用备用模型。
+
+### ERR-04 `max_tokens` 扩容（P0，故障注入）
+
+```powershell
+python -m pytest -q tests/test_agent.py -k max_tokens
+```
+
+**通过标准**：第一次截断输出不写入 Session；请求上限由 `ZCLI_MAX_TOKENS` 提升到 `ZCLI_ESCALATED_MAX_TOKENS`；重试后的完整输出被保存。
+
+### ERR-05 未知工具（P2，故障注入）
+
+普通模型只能看到已注册工具，无法稳定调用未知工具。由 Fake Client 返回 `tool_use(name="does_not_exist")`；至少验证 `ToolRegistry.execute()` 返回 `Error: unknown tool does_not_exist`，结果能写入 Session 并进入下一次模型调用。
+
+```powershell
+python -m pytest -q tests/test_tools.py -k unknown_tool
+```
+
+### CFG-01 指定工作区（P0，真实 Provider）
 
 以 `--workspace $TestRoot` 启动后输入：
 
@@ -500,23 +599,32 @@ zcli --workspace $TestRoot --session compact --new
 请告诉我你被配置的工作区路径，并使用文件匹配工具确认根目录能看到 seed.txt。
 ```
 
-**验证功能**：`--workspace` 配置进入 system prompt 和工具根目录。
+**通过标准**：system prompt 中工作区是 `$TestRoot`；glob 可发现 `seed.txt`；没有误用 ZCLI 源码目录。
 
-**通过标准**：路径是 `$TestRoot`；glob 可发现 seed.txt；没有误用 ZCLI 源码目录。
+### CFG-02 数据目录与工作区解耦（P1，真实 Provider）
 
-### CFG-02 环境变量数据目录（P1）
+```powershell
+$env:ZCLI_DATA_DIR = Join-Path $TestRoot ".zcli-external-data"
+zcli --workspace $TestRoot --session config-data --new
+```
 
-设置新的 `ZCLI_DATA_DIR`，新建 Session 并执行一次普通对话。
+执行一次普通对话后退出。
 
-**验证功能**：运行数据与 workspace 解耦。
+**通过标准**：Session 和 Memory 位于 `.zcli-external-data`；文件工具仍以 `$TestRoot` 为边界。
 
-**通过标准**：sessions 和 memory 位于指定数据目录，而非 `$TestRoot/.zcli`；文件工具仍以 workspace 为边界。
+### CFG-03 配置优先级（P1，受控测试）
 
-### CLI-01 空输入与退出别名（P2）
+当前优先级从低到高为：内置默认值 → `<workspace>/.env` → `~/.zcli/config.env` → `<workspace>/.zcli/config.env` → 系统环境变量。
+
+```powershell
+python -m pytest -q tests/test_config_recovery.py
+```
+
+**通过标准**：项目配置能读取 recovery 参数；同名系统环境变量覆盖项目配置。不得在测试日志中打印 API Key。
+
+### CLI-01 空输入与退出别名（P2，真实 CLI）
 
 依次输入空行、`/quit`；另启一次进程测试 `/exit`。
-
-**验证功能**：空输入忽略、两个退出命令。
 
 **通过标准**：空行不调用模型；退出命令立即结束且不进入 Session 消息。
 
@@ -542,8 +650,8 @@ zcli --workspace $TestRoot --session compact --new
 2. 工具：FT-04 至 FT-10、ERR-01。
 3. 安全：SEC-01 至 SEC-05。
 4. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
-5. 压缩与配置：CTX-01、CTX-02、CFG-01、CFG-02。
-6. 故障注入：SEC-06、MEM-07、ERR-02。
+5. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
+6. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-05、CFG-03。
 7. 边界：BND-01。
 
 每个用例建议记录：
@@ -569,7 +677,7 @@ zcli --workspace $TestRoot --session compact --new
 | `glob` | FT-06、FT-07、FT-10 |
 | `bash` | FT-08、FT-09 |
 | `remember` | MEM-01、MEM-06 |
-| 工具错误包装 | FT-05、ERR-01、ERR-02 |
+| 工具错误包装 | FT-05、ERR-01、ERR-05 |
 | 工作区隔离 | SEC-01、SEC-02、CFG-01 |
 | 硬拒绝策略 | SEC-03 |
 | 交互审批 | SEC-04、SEC-05、SEC-06 |
@@ -578,8 +686,13 @@ zcli --workspace $TestRoot --session compact --new
 | Memory 索引与召回 | MEM-01 至 MEM-03 |
 | 自动记忆提取与容错 | MEM-04、MEM-05、MEM-07 |
 | 记忆覆盖和分类 | MEM-06 |
-| 上下文压缩 | CTX-01、CTX-02 |
-| 配置和数据目录 | CFG-01、CFG-02 |
+| 大结果落盘 | CTX-01 |
+| 分层压缩与跨进程恢复 | CTX-02、CTX-03 |
+| 历史裁剪、微压缩、工具配对 | CTX-04 |
+| Reactive compact | CTX-05 |
+| 429/529 与 fallback | ERR-02、ERR-03 |
+| `max_tokens` 扩容与续写 | ERR-04 |
+| 配置和数据目录 | CFG-01 至 CFG-03 |
 | CLI 控制命令 | SES-04、MEM-03、CLI-01 |
 | 未实现能力边界 | BND-01 |
 
@@ -592,5 +705,31 @@ zcli --workspace $TestRoot --session compact --new
 - Memory 相关性是词项重叠检索，不是向量语义检索。测试 Prompt 应包含记忆中的关键词，例如“缩进”“pathlib”。
 - Session 的“原子写盘”应通过 JSON 始终可解析、无残留临时文件及故障注入测试验证；仅完成一次正常对话只能证明基础持久化。
 - Prompt 测试同时受模型决策影响；若底层工具单元测试通过而 Prompt 用例失败，应分别记录为“工具层通过、Agent 编排层失败”。
+- `estimate_tokens()` 使用 JSON 字符数除以 4 的近似值，不同语言和 Provider 的真实 token 数会有偏差；CTX-02 必须记录实际阈值。
+- 429、529、`max_tokens` 和 prompt-too-long 若未自然发生，不能记为 PASS；只有对应故障注入测试通过才算完成恢复验收。
 
 发布门槛建议：所有 P0 用例通过；P1 通过率至少 90%；任何安全 P0 失败都应阻止发布。
+
+## 12. 环境恢复与清理
+
+完成 CTX/CFG 专项测试后，先清除本次 PowerShell 进程设置的覆盖变量，避免影响日常使用：
+
+```powershell
+Remove-Item Env:ZCLI_CONTEXT_LIMIT -ErrorAction SilentlyContinue
+Remove-Item Env:ZCLI_DATA_DIR -ErrorAction SilentlyContinue
+Remove-Item Env:FALLBACK_MODEL_ID -ErrorAction SilentlyContinue
+Remove-Item Env:ZCLI_MAX_TOKENS -ErrorAction SilentlyContinue
+Remove-Item Env:ZCLI_ESCALATED_MAX_TOKENS -ErrorAction SilentlyContinue
+```
+
+测试证据归档后，可删除本次唯一临时目录：
+
+```powershell
+# 先显示并人工确认路径确实位于 TEMP 且名称以 zcli-e2e- 开头
+$TestRoot
+if ((Split-Path $TestRoot -Parent) -eq $env:TEMP -and (Split-Path $TestRoot -Leaf) -like "zcli-e2e-*") {
+    Remove-Item -LiteralPath $TestRoot -Recurse -Force
+}
+```
+
+不要把清理命令交给 ZCLI Agent 执行；它属于测试操作者的环境管理步骤。
