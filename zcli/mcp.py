@@ -10,8 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 
-MCP_PROTOCOL_VERSION = "2024-11-05"
+
+MCP_PROTOCOL_VERSION = "2025-06-18"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -23,11 +25,14 @@ def normalize_mcp_name(name: str) -> str:
 @dataclass(frozen=True)
 class MCPServerConfig:
     name: str
-    command: str
+    transport: str = "stdio"
+    command: str | None = None
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     cwd: str | None = None
     timeout: float = 30.0
+    url: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -58,13 +63,13 @@ class MCPTool:
 
 
 def _expand_env(value: str) -> str:
-    match = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)
-    if not match:
-        return value
-    variable = match.group(1)
-    if variable not in os.environ:
-        raise ValueError(f"environment variable {variable} is not set")
-    return os.environ[variable]
+    def replace(match: re.Match[str]) -> str:
+        variable = match.group(1)
+        if variable not in os.environ:
+            raise ValueError(f"environment variable {variable} is not set")
+        return os.environ[variable]
+
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", replace, value)
 
 
 def load_mcp_config(workspace: Path) -> tuple[dict[str, MCPServerConfig], list[str]]:
@@ -96,26 +101,54 @@ def load_mcp_config(workspace: Path) -> tuple[dict[str, MCPServerConfig], list[s
                 raise ValueError("server name must be a non-empty string")
             if not isinstance(value, dict):
                 raise ValueError("server config must be an object")
+            transport = str(value.get("transport", "stdio")).strip().lower()
+            if transport not in {"stdio", "streamable_http"}:
+                raise ValueError(f"unsupported transport: {transport}")
             command = value.get("command")
-            if not isinstance(command, str) or not command.strip():
-                raise ValueError("command must be a non-empty string")
+            url = value.get("url")
+            if transport == "stdio" and (not isinstance(command, str) or not command.strip()):
+                raise ValueError("stdio command must be a non-empty string")
+            if transport == "streamable_http":
+                if not isinstance(url, str) or not url.strip():
+                    raise ValueError("streamable_http url must be a non-empty string")
+                parsed_url = httpx.URL(url)
+                if parsed_url.scheme not in {"http", "https"} or not parsed_url.host:
+                    raise ValueError("streamable_http url must use http or https")
+                if parsed_url.username or parsed_url.password:
+                    raise ValueError("credentials must use headers, not URL userinfo")
             args = value.get("args", [])
             env = value.get("env", {})
+            headers = value.get("headers", {})
             if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
                 raise ValueError("args must be a string array")
             if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
                 raise ValueError("env must contain string values")
+            if not isinstance(headers, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in headers.items()):
+                raise ValueError("headers must contain string values")
+            reserved_headers = {
+                "accept", "content-type", "content-length", "host",
+                "mcp-session-id", "mcp-protocol-version",
+            }
+            conflict = reserved_headers.intersection(key.lower() for key in headers)
+            if conflict:
+                raise ValueError(f"headers cannot override MCP transport headers: {', '.join(sorted(conflict))}")
+            timeout = float(value.get("timeout", 30))
+            if timeout <= 0:
+                raise ValueError("timeout must be greater than zero")
             safe = normalize_mcp_name(name)
             if safe in normalized and normalized[safe] != name:
                 raise ValueError(f"normalized name collides with {normalized[safe]!r}")
             normalized[safe] = name
             configs[name] = MCPServerConfig(
                 name=name,
+                transport=transport,
                 command=command,
                 args=tuple(args),
                 env=dict(env),
                 cwd=value.get("cwd"),
-                timeout=float(value.get("timeout", 30)),
+                timeout=timeout,
+                url=url,
+                headers=dict(headers),
             )
         except Exception as exc:
             errors.append(f"server {name!r}: {type(exc).__name__}: {exc}")
@@ -146,7 +179,7 @@ class StdioMCPClient:
             if not cwd.is_relative_to(self.workspace):
                 raise ValueError(f"MCP cwd escapes workspace: {self.config.cwd}")
         self.process = subprocess.Popen(
-            [self.config.command, *self.config.args],
+            [self.config.command or "", *self.config.args],
             cwd=cwd,
             env=env,
             stdin=subprocess.PIPE,
@@ -177,19 +210,7 @@ class StdioMCPClient:
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         result = self._request("tools/call", {"name": name, "arguments": arguments})
-        content = result.get("content", [])
-        rendered: list[str] = []
-        for item in content if isinstance(content, list) else []:
-            if not isinstance(item, dict):
-                rendered.append(str(item))
-            elif item.get("type") == "text":
-                rendered.append(str(item.get("text", "")))
-            else:
-                rendered.append(json.dumps(item, ensure_ascii=False))
-        text = "\n".join(part for part in rendered if part)
-        if result.get("isError"):
-            return f"MCP error: {text or 'tool call failed'}"
-        return text or json.dumps(result, ensure_ascii=False)
+        return _render_tool_result(result)
 
     def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -273,10 +294,192 @@ class StdioMCPClient:
                 process.wait(timeout=2)
 
 
+class _HTTPSessionExpired(RuntimeError):
+    pass
+
+
+class StreamableHTTPMCPClient:
+    """Synchronous MCP Streamable HTTP client supporting JSON and SSE responses."""
+
+    def __init__(self, config: MCPServerConfig, workspace: Path):
+        self.config = config
+        self.workspace = workspace.resolve()
+        self.session_id: str | None = None
+        self.protocol_version = MCP_PROTOCOL_VERSION
+        self.tools: list[dict[str, Any]] = []
+        self._request_id = 0
+        self._lock = threading.RLock()
+        headers = {key: _expand_env(value) for key, value in config.headers.items()}
+        self.client = httpx.Client(headers=headers, timeout=config.timeout, follow_redirects=False)
+        self._closed = False
+
+    def connect(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if self.tools:
+                return self.tools
+            self._initialize()
+            return self.tools
+
+    def _initialize(self) -> None:
+        self.session_id = None
+        result = self._request_once(
+            "initialize",
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "zcli", "version": "0.1.0"},
+            },
+            initialization=True,
+        )
+        negotiated = result.get("protocolVersion")
+        if isinstance(negotiated, str) and negotiated:
+            self.protocol_version = negotiated
+        self._notify("notifications/initialized", {})
+        tools_result = self._request_once("tools/list", {})
+        tools = tools_result.get("tools", [])
+        if not isinstance(tools, list):
+            raise RuntimeError("tools/list returned a non-list tools field")
+        self.tools = tools
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        result = self._request("tools/call", {"name": name, "arguments": arguments})
+        return _render_tool_result(result)
+
+    def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            try:
+                return self._request_once(method, params)
+            except _HTTPSessionExpired:
+                self.tools = []
+                self._initialize()
+                return self._request_once(method, params)
+
+    def _request_once(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        initialization: bool = False,
+    ) -> dict[str, Any]:
+        self._request_id += 1
+        request_id = self._request_id
+        payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        message = self._post(payload, request_id=request_id, initialization=initialization)
+        if "error" in message:
+            raise RuntimeError(f"MCP {method} failed: {message['error']}")
+        result = message.get("result", {})
+        return result if isinstance(result, dict) else {"value": result}
+
+    def _notify(self, method: str, params: dict[str, Any]) -> None:
+        payload = {"jsonrpc": "2.0", "method": method, "params": params}
+        response = self.client.post(self.config.url or "", json=payload, headers=self._headers())
+        if response.status_code == 404 and self.session_id:
+            raise _HTTPSessionExpired("MCP HTTP session expired")
+        if response.status_code != 202:
+            response.raise_for_status()
+            raise RuntimeError(f"MCP notification expected HTTP 202, got {response.status_code}")
+
+    def _post(
+        self,
+        payload: dict[str, Any],
+        *,
+        request_id: int,
+        initialization: bool,
+    ) -> dict[str, Any]:
+        with self.client.stream(
+            "POST",
+            self.config.url or "",
+            json=payload,
+            headers=self._headers(initialization=initialization),
+        ) as response:
+            if initialization:
+                session_id = response.headers.get("mcp-session-id")
+                if session_id:
+                    if not all(0x21 <= ord(char) <= 0x7E for char in session_id):
+                        raise RuntimeError("MCP server returned an invalid session ID")
+                    self.session_id = session_id
+            if response.status_code == 404 and self.session_id:
+                raise _HTTPSessionExpired("MCP HTTP session expired")
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if content_type == "application/json":
+                message = json.loads(response.read())
+                if not isinstance(message, dict):
+                    raise RuntimeError("MCP HTTP response must be a JSON object")
+                if message.get("id") != request_id:
+                    raise RuntimeError(f"MCP HTTP response ID mismatch: expected {request_id}")
+                return message
+            if content_type == "text/event-stream":
+                return self._read_sse_response(response, request_id)
+            raise RuntimeError(f"unsupported MCP HTTP content type: {content_type or '(missing)'}")
+
+    @staticmethod
+    def _read_sse_response(response: httpx.Response, request_id: int) -> dict[str, Any]:
+        data_lines: list[str] = []
+        for line in response.iter_lines():
+            if line == "":
+                if not data_lines:
+                    continue
+                raw = "\n".join(data_lines)
+                data_lines.clear()
+                message = json.loads(raw)
+                if isinstance(message, dict) and message.get("id") == request_id:
+                    return message
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip(" "))
+        if data_lines:
+            message = json.loads("\n".join(data_lines))
+            if isinstance(message, dict) and message.get("id") == request_id:
+                return message
+        raise RuntimeError("MCP SSE stream ended before the matching response")
+
+    def _headers(self, *, initialization: bool = False) -> dict[str, str]:
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        if not initialization:
+            headers["MCP-Protocol-Version"] = self.protocol_version
+            if self.session_id:
+                headers["Mcp-Session-Id"] = self.session_id
+        return headers
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if self.session_id:
+                response = self.client.delete(self.config.url or "", headers=self._headers())
+                if response.status_code not in {200, 204, 405}:
+                    response.raise_for_status()
+        except Exception:
+            pass
+        finally:
+            self.client.close()
+
+
+def _render_tool_result(result: dict[str, Any]) -> str:
+    content = result.get("content", [])
+    rendered: list[str] = []
+    for item in content if isinstance(content, list) else []:
+        if not isinstance(item, dict):
+            rendered.append(str(item))
+        elif item.get("type") == "text":
+            rendered.append(str(item.get("text", "")))
+        else:
+            rendered.append(json.dumps(item, ensure_ascii=False))
+    text = "\n".join(part for part in rendered if part)
+    if result.get("isError"):
+        return f"MCP error: {text or 'tool call failed'}"
+    return text or json.dumps(result, ensure_ascii=False)
+
+
 class MCPManager:
     def __init__(self, workspace: Path):
         self.workspace = workspace.resolve()
-        self.clients: dict[str, StdioMCPClient] = {}
+        self.clients: dict[str, StdioMCPClient | StreamableHTTPMCPClient] = {}
         self.tools: dict[str, MCPTool] = {}
         self.errors: list[str] = []
 
@@ -292,7 +495,11 @@ class MCPManager:
         if not config:
             available = ", ".join(sorted(self.configs)) or "(none)"
             return f"MCP server not found: {name}. Available: {available}"
-        client = StdioMCPClient(config, self.workspace)
+        client: StdioMCPClient | StreamableHTTPMCPClient
+        if config.transport == "streamable_http":
+            client = StreamableHTTPMCPClient(config, self.workspace)
+        else:
+            client = StdioMCPClient(config, self.workspace)
         try:
             remote_tools = client.connect()
             discovered: dict[str, MCPTool] = {}
@@ -341,7 +548,7 @@ class MCPManager:
             state = "connected" if name in self.clients else "available"
             count = sum(tool.server_name == name for tool in self.tools.values())
             suffix = f", {count} tools" if state == "connected" else ""
-            lines.append(f"- {name}: {state}{suffix}")
+            lines.append(f"- {name}: {state} ({configs[name].transport}){suffix}")
         if len(lines) == 1:
             lines.append("- (none configured)")
         return "\n".join(lines)

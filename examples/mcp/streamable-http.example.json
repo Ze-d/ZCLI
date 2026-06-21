@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "zotero": {
+      "transport": "streamable_http",
+      "url": "http://127.0.0.1:23120/mcp",
+      "timeout": 30
+    },
+    "authenticated-service": {
+      "transport": "streamable_http",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      },
+      "timeout": 30
+    }
+  }
+}

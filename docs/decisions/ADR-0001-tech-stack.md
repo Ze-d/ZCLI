@@ -24,5 +24,5 @@
 ## 后果
 
 - **正面**: 总依赖仅 3 个（anthropic, python-dotenv, pyyaml），安装快速，审计面小
-- **负面**: 无流式输出、无多 Agent 编排；MCP 当前只覆盖 stdio Tools，尚非完整 runtime
+- **负面**: 无流式输出、无多 Agent 编排；MCP 已覆盖 stdio/Streamable HTTP Tools，但尚非完整 runtime
 - **风险**: Anthropic SDK API 变更需要跟进

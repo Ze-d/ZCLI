@@ -4,7 +4,7 @@
 
 > 你的终端个人编程 Agent
 
-ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、生命周期 Hooks、TodoWrite、持久化 Task Graph、按需 Skill 加载、stdio MCP 外部工具、长期记忆、会话持久化、分层上下文压缩和 API 错误恢复。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
+ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、生命周期 Hooks、TodoWrite、持久化 Task Graph、按需 Skill 加载、stdio/Streamable HTTP MCP 外部工具、长期记忆、会话持久化、分层上下文压缩和 API 错误恢复。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
 
 上下文处理参考 `learn-claude-code` 的 s08、s11 和 s20：大工具结果先落盘，再裁剪旧消息和旧工具结果，仍超限时保存完整 transcript 并生成摘要。API 调用支持 429/529 指数退避、529 fallback model、`max_tokens` 扩容与续写，以及 prompt-too-long 后的 reactive compact。
 
@@ -111,9 +111,22 @@ REPL 内置命令：
 
 ### MCP 外部工具
 
-把 [示例配置](examples/mcp/mcp.example.json) 复制为工作区 `.mcp.json` 后启动 ZCLI，再让 Agent“连接 echo MCP 并调用 echo”。连接会先请求用户审批，发现后的工具以 `mcp__echo__echo` 加入动态工具池。
+把 [stdio 示例配置](examples/mcp/mcp.example.json) 复制为工作区 `.mcp.json` 后启动 ZCLI，再让 Agent“连接 echo MCP 并调用 echo”。连接会先请求用户审批，发现后的工具以 `mcp__echo__echo` 加入动态工具池。
 
-配置也可放在 `~/.zcli/mcp.json` 或工作区 `.zcli/mcp.json`；当前支持真实 stdio transport。
+连接已经运行的 Streamable HTTP Server（例如 Zotero）可使用 [HTTP 示例配置](examples/mcp/streamable-http.example.json)：
+
+```json
+{
+  "mcpServers": {
+    "zotero": {
+      "transport": "streamable_http",
+      "url": "http://127.0.0.1:23120/mcp"
+    }
+  }
+}
+```
+
+配置也可放在 `~/.zcli/mcp.json` 或工作区 `.zcli/mcp.json`。
 
 ## 构建 & 发布
 
@@ -154,7 +167,7 @@ twine upload dist/*
 
 ## 技术栈
 
-Python 3.11+ · anthropic · python-dotenv · pyyaml · pytest
+Python 3.11+ · anthropic · httpx · python-dotenv · pyyaml · pytest
 
 ## License
 

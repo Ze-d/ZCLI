@@ -25,6 +25,6 @@ ZCLI 是一个轻量级个人编程 Agent，运行在终端中，具备多轮对
 
 - **语言**: Python 3.11+
 - **包管理**: setuptools + pip editable install
-- **核心依赖**: `anthropic` `python-dotenv` `pyyaml`
+- **核心依赖**: `anthropic` `httpx` `python-dotenv` `pyyaml`
 - **入口**: `zcli` 命令 / `python -m zcli`
 - **测试**: pytest，覆盖 Agent、Memory、Session、Skill、MCP、工具、压缩和错误恢复核心路径

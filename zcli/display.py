@@ -73,7 +73,7 @@ _CAPABILITIES: Sequence[tuple[str, str]] = [
     ("Session",      "Atomic JSON persistence, multi-session"),
     ("Planning",     "Session todos + durable dependency task graph"),
     ("Skills",       "Catalog in prompt, full instructions on demand"),
-    ("MCP",          "Discover stdio servers and add external tools dynamically"),
+    ("MCP",          "Connect stdio/HTTP servers and add tools dynamically"),
     ("Compact",      "Auto-summarize long context"),
     ("Multi-LLM",    "Anthropic / DeepSeek / MiniMax / GLM / Kimi …"),
     ("Sandbox",     "Path jail + hard-deny dangerous commands"),

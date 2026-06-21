@@ -40,6 +40,18 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 | `ZCLI_DATA_DIR` | 否 | `<workspace>/.zcli` | 数据目录 |
 | `ZCLI_CONTEXT_LIMIT` | 否 | `50000` | 上下文 token 上限 |
 
+MCP 配置来自 `~/.zcli/mcp.json`、`<workspace>/.mcp.json` 和 `<workspace>/.zcli/mcp.json`（后者优先）。每个 Server 使用以下二选一结构：
+
+```json
+{"transport": "stdio", "command": "python", "args": ["server.py"]}
+```
+
+```json
+{"transport": "streamable_http", "url": "http://127.0.0.1:23120/mcp", "headers": {}}
+```
+
+省略 `transport` 时默认为 `stdio`。HTTP `headers` 支持 `${ENV_NAME}` 模板，但不能覆盖 MCP Session、协议版本和基础 HTTP transport Header。
+
 ## Agent 内部接口
 
 ### `Agent.run_turn(session, query, emit=print) -> str`

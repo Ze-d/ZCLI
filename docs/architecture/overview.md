@@ -37,11 +37,11 @@
 - **Lifecycle hooks**: 输入、工具前后和停止阶段通过可注册 Hook 扩展，权限由默认 PreToolUse Hook 执行
 - **Two-level planning**: Session Todo 管当前步骤；持久 Task Graph 管依赖、认领和跨 Session 进度
 - **Two-level skill loading**: System Prompt 只放 Catalog，完整 SKILL.md 由 `load_skill` 按需加载
-- **Late-bound MCP tools**: stdio 连接后发现工具，以命名空间合入下一轮动态工具池
+- **Late-bound MCP tools**: stdio 或 Streamable HTTP 连接后发现工具，以命名空间合入下一轮动态工具池
 
 分层策略、阈值和协议不变量见 [context-compaction.md](context-compaction.md)。
 Hook 事件和扩展约定见 [hooks.md](hooks.md)。
 两层规划模型见 [planning-and-tasks.md](planning-and-tasks.md)。
 Skill 加载模型见 [skills.md](skills.md)。
 
-MCP 的 stdio 连接、动态工具池与权限模型见 [mcp.md](mcp.md)。
+MCP 的多 transport 连接、动态工具池与权限模型见 [mcp.md](mcp.md)。

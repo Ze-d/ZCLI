@@ -15,13 +15,13 @@
 - Session 创建、保存、恢复、列表、非法 ID 和同名冲突
 - Session TodoWrite、状态更新、提醒与持久化 Task Graph
 - Skill Catalog、YAML frontmatter、按需加载、热重扫和诊断
-- MCP stdio 配置、连接审批、工具发现、动态注册、调用和进程回收
+- MCP stdio/Streamable HTTP 配置、连接审批、工具发现、JSON/SSE 调用和连接关闭
 - Memory 显式记忆、自动提取、索引、相关召回、覆盖更新和类型
 - 长上下文压缩及压缩后的连续性
 - 工具报错、模型不应虚报成功、中文与 UTF-8 文件
 - CLI 内置命令和配置项
 
-尚未实现的 Team、Cron 和 Worktree 不应纳入“通过率”，见第 12 节。MCP 已支持真实 stdio 工具桥接，但不应据此宣称支持 HTTP/SSE、OAuth、Resources 或服务端通知。
+尚未实现的 Team、Cron 和 Worktree 不应纳入“通过率”，见第 12 节。MCP 已支持真实 stdio 和 Streamable HTTP Tools，但不应据此宣称支持 OAuth、Resources、独立 GET 通知流或完整自动重连。
 
 本手册包含两类测试：
 
@@ -486,7 +486,7 @@ python -m pytest -q tests/test_skills.py -k "hot_rescans or malformed or budget"
 /mcp
 ```
 
-**通过标准**：显示 `echo: available`；没有启动子进程、调用模型或把配置内容写入 Session。若配置损坏，应显示 `[mcp error]`，CLI 仍可继续。
+**通过标准**：显示 `echo: available (stdio)`；没有启动子进程、调用模型或把配置内容写入 Session。若配置损坏，应显示 `[mcp error]`，CLI 仍可继续。
 
 ### MCP-02 连接、动态发现与调用（P0，真实 Provider）
 
@@ -524,13 +524,36 @@ python -m pytest -q tests/test_skills.py -k "hot_rescans or malformed or budget"
 python -m pytest -q tests/test_mcp.py
 ```
 
-**通过标准**：真实本地子进程完成 `initialize → notifications/initialized → tools/list → tools/call`；名称规范化为 `mcp__server__tool`；连接和 `destructiveHint=true` 工具在非交互模式被拒绝；Agent 连接后刷新工具池；`close()` 回收进程。
+**通过标准**：真实本地子进程完成 stdio 的 `initialize → notifications/initialized → tools/list → tools/call`；独立 HTTP fixture 验证 JSON 发现、SSE 调用、Session ID、协议版本请求头和 DELETE；连接与 `destructiveHint=true` 工具在非交互模式被拒绝；Agent 连接后刷新工具池。
 
 ### MCP-05 配置优先级与安全边界（P1，受控测试）
 
-**通过标准**：`.zcli/mcp.json` 覆盖 `.mcp.json`，后者覆盖 `~/.zcli/mcp.json`；规范化名称冲突被诊断；`cwd` 逃逸工作区被拒绝；`${NAME}` 只从环境读取且缺失时报错。不要在测试输出打印环境变量值。
+**通过标准**：`.zcli/mcp.json` 覆盖 `.mcp.json`，后者覆盖 `~/.zcli/mcp.json`；规范化名称冲突被诊断；stdio 的 `cwd` 逃逸工作区被拒绝；HTTP URL userinfo、未知 transport 和覆盖保留请求头被拒绝；`${NAME}` 从环境读取且缺失时报错。不要在测试输出打印环境变量值。
 
-> 当前阶段仅验收 stdio Tools。HTTP/SSE/WebSocket、OAuth、Resources、Prompts、反向通知、工具变更订阅和断线自动重连属于明确未实现边界。
+### MCP-06 已运行的 Streamable HTTP Server（P0，有 Zotero 环境时）
+
+把独立服务保持运行，在测试工作区 `.mcp.json` 写入：
+
+```json
+{
+  "mcpServers": {
+    "zotero": {
+      "transport": "streamable_http",
+      "url": "http://127.0.0.1:23120/mcp"
+    }
+  }
+}
+```
+
+重启 ZCLI，先输入 `/mcp`，再输入：
+
+```text
+请连接 zotero MCP，列出发现的工具名称，但暂时不要调用这些远端工具。
+```
+
+批准连接。**通过标准**：`/mcp` 显示 `zotero: available (streamable_http)`；ZCLI 不启动 Zotero 子进程；完成 HTTP initialize 和 tools/list；连接结果只报告服务实际返回的工具。
+
+> 当前阶段验收 stdio 和 Streamable HTTP Tools。旧版 HTTP+SSE、WebSocket、OAuth、Resources、Prompts、独立 GET 反向通知、SSE 断点续传、工具变更订阅和通用自动重连属于明确未实现边界。
 
 ## 10. Session 与 Memory 场景
 
@@ -890,7 +913,7 @@ python -m pytest -q tests/test_config_recovery.py
 
 **验证功能**：能力边界诚实性。
 
-**通过标准**：不出现伪造的 Team/Cron/Worktree 工具结果；明确说明这些专用工具当前未注册。TodoWrite、Task Graph、Skill 和 stdio MCP 已经可用。
+**通过标准**：不出现伪造的 Team/Cron/Worktree 工具结果；明确说明这些专用工具当前未注册。TodoWrite、Task Graph、Skill 和 stdio/Streamable HTTP MCP 已经可用。
 
 ## 13. 建议执行顺序与结果记录
 
@@ -902,7 +925,7 @@ python -m pytest -q tests/test_config_recovery.py
 4. Hooks：HOOK-01，然后执行 HOOK-02 至 HOOK-04 的受控集成测试。
 5. 规划：TODO-01 至 TODO-04、TASK-01 至 TASK-04。
 6. Skill：SKILL-01 至 SKILL-05。
-7. MCP：MCP-01 至 MCP-05。
+7. MCP：MCP-01 至 MCP-05；有独立 Zotero Server 时执行 MCP-06。
 8. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
 9. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
 10. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-05、CFG-03。
@@ -952,6 +975,7 @@ python -m pytest -q tests/test_config_recovery.py
 | MCP 连接、动态工具池与调用 | MCP-02、MCP-04 |
 | MCP 错误与重复连接 | MCP-03 |
 | MCP 权限与进程生命周期 | MCP-04 |
+| Streamable HTTP 外部 Server | MCP-04、MCP-06 |
 | Session 原子持久化/恢复 | SES-01、SES-02 |
 | Session 隔离/校验/列表 | SES-03 至 SES-06 |
 | Memory 索引与召回 | MEM-01 至 MEM-03 |
@@ -981,7 +1005,7 @@ python -m pytest -q tests/test_config_recovery.py
 - 自定义 Hook 尚无 CLI/settings 配置入口；HOOK-02 至 HOOK-04 验证的是公开 Python API 与完整 Agent Loop，不应伪装成纯 CLI 黑盒测试。
 - Task Graph 当前没有环检测和跨进程文件锁；验收时不要并行启动多个进程认领同一任务。
 - Skill 目前只扫描工作区 `skills/`，测试不能据此宣称已支持用户级、插件、MCP 或 forked Skill。
-- MCP 当前只实现 stdio Tools；连接会执行配置中的本地命令，因此审批不可绕过，配置文件也应视为可执行配置。
+- MCP 当前实现 stdio 和 Streamable HTTP Tools；stdio 会执行本地命令，HTTP 会访问配置 URL，因此连接审批不可绕过，配置文件应视为敏感配置。
 
 发布门槛建议：所有 P0 用例通过；P1 通过率至少 90%；任何安全 P0 失败都应阻止发布。
 
