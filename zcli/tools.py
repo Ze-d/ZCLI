@@ -1,26 +1,44 @@
 from __future__ import annotations
 
+import ast
 import glob as globlib
+import json
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from .memory import MemoryStore
 from .permissions import PermissionPolicy
+from .tasks import TaskStore
+
+if TYPE_CHECKING:
+    from .session import Session
 
 
 class ToolRegistry:
-    def __init__(self, workspace: Path, memory: MemoryStore, interactive: bool = True):
+    def __init__(
+        self,
+        workspace: Path,
+        memory: MemoryStore,
+        interactive: bool = True,
+        tasks: TaskStore | None = None,
+    ):
         self.workspace = workspace.resolve()
         self.memory = memory
+        self.tasks = tasks or TaskStore(memory.directory.parent)
         self.policy = PermissionPolicy(self.workspace, interactive)
         self.handlers: dict[str, Callable[..., str]] = {
-            "bash": self.bash,
+            "bash": self._run_bash,
             "read_file": self.read_file,
             "write_file": self.write_file,
             "edit_file": self.edit_file,
             "glob": self.glob,
             "remember": self.remember,
+            "create_task": self.create_task,
+            "list_tasks": self.list_tasks,
+            "get_task": self.get_task,
+            "claim_task": self.claim_task,
+            "complete_task": self.complete_task,
         }
 
     @property
@@ -32,17 +50,46 @@ class ToolRegistry:
             self._tool("edit_file", "Replace exact text once in a file.", {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, ["path", "old_text", "new_text"]),
             self._tool("glob", "Find workspace files using a glob pattern.", {"pattern": {"type": "string"}}, ["pattern"]),
             self._tool("remember", "Persist a stable user preference or durable project fact. Use this whenever the user explicitly asks you to remember something.", {"name": {"type": "string"}, "description": {"type": "string"}, "body": {"type": "string"}, "memory_type": {"type": "string", "enum": ["user", "feedback", "project", "reference"]}}, ["name", "description", "body"]),
+            self._tool("todo_write", "Create or update the execution checklist for the current session. Use for multi-step work and keep statuses current.", {"todos": {"type": "array", "items": {"type": "object", "properties": {"content": {"type": "string"}, "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}}, "required": ["content", "status"]}}}, ["todos"]),
+            self._tool("create_task", "Create a durable task. blockedBy contains task IDs that must complete first.", {"subject": {"type": "string"}, "description": {"type": "string"}, "blockedBy": {"type": "array", "items": {"type": "string"}}}, ["subject"]),
+            self._tool("list_tasks", "List durable tasks and their states.", {}, []),
+            self._tool("get_task", "Get complete durable task details.", {"task_id": {"type": "string"}}, ["task_id"]),
+            self._tool("claim_task", "Claim an unblocked pending task.", {"task_id": {"type": "string"}, "owner": {"type": "string"}}, ["task_id"]),
+            self._tool("complete_task", "Complete an in-progress task and report newly unblocked tasks.", {"task_id": {"type": "string"}}, ["task_id"]),
         ]
 
     @staticmethod
     def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
         return {"name": name, "description": description, "input_schema": {"type": "object", "properties": properties, "required": required}}
 
-    def execute(self, name: str, arguments: dict) -> str:
+    def permission_error(self, name: str, arguments: dict) -> str | None:
+        if name == "bash":
+            return self.policy.check_command(str(arguments.get("command", "")))
+        if name in {"read_file", "write_file", "edit_file"}:
+            return self.policy.check_path(str(arguments.get("path", "")))
+        return None
+
+    def execute(
+        self,
+        name: str,
+        arguments: dict,
+        *,
+        permission_checked: bool = False,
+        session: Session | None = None,
+    ) -> str:
+        if name == "todo_write":
+            try:
+                return self.todo_write(arguments.get("todos", []), session)
+            except Exception as exc:
+                return f"Error: {type(exc).__name__}: {exc}"
         handler = self.handlers.get(name)
         if not handler:
             return f"Error: unknown tool {name}"
         try:
+            if not permission_checked:
+                error = self.permission_error(name, arguments)
+                if error:
+                    return f"Permission denied: {error}"
             return handler(**arguments)
         except Exception as exc:
             return f"Error: {type(exc).__name__}: {exc}"
@@ -53,13 +100,14 @@ class ToolRegistry:
             raise ValueError(error)
         return (self.workspace / path).resolve()
 
-    def bash(self, command: str) -> str:
-        error = self.policy.check_command(command)
-        if error:
-            return f"Permission denied: {error}"
+    def _run_bash(self, command: str) -> str:
         result = subprocess.run(command, shell=True, cwd=self.workspace, capture_output=True, text=True, timeout=120)
         output = (result.stdout + result.stderr).strip()
         return (output or "(no output)")[:50_000]
+
+    def bash(self, command: str) -> str:
+        """Safe direct-call facade; Agent execution uses the PreToolUse hook."""
+        return self.execute("bash", {"command": command})
 
     def read_file(self, path: str) -> str:
         return self._path(path).read_text(encoding="utf-8")[:50_000]
@@ -89,3 +137,51 @@ class ToolRegistry:
         memory = self.memory.remember(name, description, body, memory_type)
         return f"Remembered {memory.name} in {memory.filename}"
 
+    @staticmethod
+    def _normalize_todos(todos) -> list[dict]:
+        if isinstance(todos, str):
+            try:
+                todos = json.loads(todos)
+            except json.JSONDecodeError:
+                todos = ast.literal_eval(todos)
+        if not isinstance(todos, list):
+            raise ValueError("todos must be a list")
+        normalized = []
+        for index, todo in enumerate(todos):
+            if not isinstance(todo, dict):
+                raise ValueError(f"todos[{index}] must be an object")
+            content = str(todo.get("content", "")).strip()
+            status = todo.get("status")
+            if not content:
+                raise ValueError(f"todos[{index}] content cannot be empty")
+            if status not in {"pending", "in_progress", "completed"}:
+                raise ValueError(f"todos[{index}] has invalid status: {status}")
+            normalized.append({"content": content, "status": status})
+        return normalized
+
+    def todo_write(self, todos, session: Session | None) -> str:
+        if session is None:
+            raise ValueError("todo_write requires an active session")
+        session.todos = self._normalize_todos(todos)
+        session.rounds_since_todo = 0
+        icons = {"pending": " ", "in_progress": ">", "completed": "x"}
+        lines = ["Current todos:"] + [
+            f"[{icons[todo['status']]}] {todo['content']}" for todo in session.todos
+        ]
+        return "\n".join(lines)
+
+    def create_task(self, subject: str, description: str = "", blockedBy: list[str] | None = None) -> str:
+        task = self.tasks.create(subject, description, blockedBy)
+        return f"Created {task.id}: {task.subject}"
+
+    def list_tasks(self) -> str:
+        return self.tasks.render()
+
+    def get_task(self, task_id: str) -> str:
+        return self.tasks.get_json(task_id)
+
+    def claim_task(self, task_id: str, owner: str = "agent") -> str:
+        return self.tasks.claim(task_id, owner)
+
+    def complete_task(self, task_id: str) -> str:
+        return self.tasks.complete(task_id)

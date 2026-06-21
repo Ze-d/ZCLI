@@ -47,6 +47,16 @@ def main(argv: list[str] | None = None) -> int:
             for item in agent.sessions.list():
                 print(f"{item.id}\t{item.updated_at}")
             continue
+        if query == "/todos":
+            if not session.todos:
+                print("(no todos)")
+            else:
+                for todo in session.todos:
+                    print(f"[{todo['status']}] {todo['content']}")
+            continue
+        if query == "/tasks":
+            print(agent.tasks.render())
+            continue
         try:
             agent.run_turn(session, query)
         except Exception as exc:
@@ -56,4 +66,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

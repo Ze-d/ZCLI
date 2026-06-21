@@ -7,15 +7,17 @@
   │
   ▼
 cli.py: REPL 循环
-  │ 内置命令? → /exit /memory /sessions → 直接处理
+  │ 内置命令? → /exit /memory /sessions /todos /tasks → 直接处理
   │ 否 → agent.run_turn(session, query)
   ▼
 agent.py: Pre-turn
+  ├─ hooks.trigger(UserPromptSubmit) → 阻断或附加上下文
   ├─ memory.render_relevant(query)  → 相关记忆片段
   ├─ session.messages.append(user_msg)
   └─ sessions.save(session)        → 原子写盘
   ▼
 agent.py: Tool loop (while True)
+  ├─ rounds_since_todo >= 3? → 注入 Todo reminder
   ├─ context.prepare(messages)
   │   └─ 大结果落盘 → 历史裁剪 → 旧结果压缩 → 必要时摘要
   ├─ recovery.with_retry(...)
@@ -23,12 +25,17 @@ agent.py: Tool loop (while True)
   ├─ client.messages.create()      → LLM 调用
   ├─ session.messages.append(assistant_msg)
   ├─ 有 tool_use?
-  │   ├─ tools.execute(name, input)
+  │   ├─ hooks.trigger(PreToolUse)
+  │   │   ├─ blocked → 权限/Hook 拒绝结果
+  │   │   └─ allow → tools.execute(name, input)
+  │   ├─ hooks.trigger(PostToolUse) → 检查/改写输出
   │   ├─ emit("[tool_name] output[:300]")
   │   ├─ session.messages.append(tool_results)
   │   └─ 继续循环
   └─ 无 tool_use?
-      └─ 跳出循环
+      ├─ hooks.trigger(Stop)
+      ├─ continuation → 注入一次 user 消息并继续
+      └─ 无 continuation → 跳出循环
   ▼
 agent.py: Post-turn
   └─ _extract_memories(turn_messages) → 容错异步抽取
@@ -48,11 +55,26 @@ Session 生命周期:
         ▼
   run_turn() 每轮:
     messages 追加 user/assistant/tool_result
+    todos 与 rounds_since_todo 随 Session 保存
     summary 在 compact 时更新
     sessions.save() → 原子写 .zcli/sessions/<id>.json
         │
         ▼
   下次 load_or_create() 自动恢复
+```
+
+## Planning 状态
+
+```text
+Session Todo:
+  .zcli/sessions/<id>.json
+    ├─ todos[]
+    └─ rounds_since_todo
+
+Durable Task Graph:
+  .zcli/tasks/task_<id>.json
+    pending → in_progress → completed
+    blockedBy 全部 completed 后才允许 claim
 ```
 
 ## Memory 存储模型

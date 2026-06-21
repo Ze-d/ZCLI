@@ -21,6 +21,8 @@ class Session:
     updated_at: str
     messages: list[dict] = field(default_factory=list)
     summary: str = ""
+    todos: list[dict] = field(default_factory=list)
+    rounds_since_todo: int = 0
 
 
 class SessionStore:
@@ -73,4 +75,3 @@ class SessionStore:
             except (OSError, TypeError, json.JSONDecodeError):
                 continue
         return sorted(sessions, key=lambda item: item.updated_at, reverse=True)
-

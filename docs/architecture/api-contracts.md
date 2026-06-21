@@ -22,6 +22,8 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 | `/exit` `/quit` | 退出 |
 | `/memory` | 显示长期记忆索引 |
 | `/sessions` | 列出已保存会话 |
+| `/todos` | 显示当前 Session Todo |
+| `/tasks` | 显示持久 Task Graph |
 
 ## 配置契约
 
@@ -43,10 +45,11 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 - **输入**: Session 对象 + 用户查询字符串
 - **输出**: LLM 最终文本回复
 - **副作用**: 修改 session.messages、可能触发 compact、可能抽取 memory
+- **规划状态**: 修改 `session.todos` / `rounds_since_todo`，并读写 `.zcli/tasks/`
 - **emit**: 回调函数，默认 `print`，用于输出流式文本和工具结果
 
 ### `ToolRegistry.execute(name, arguments) -> str`
 
-- 6 个工具: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `remember`
+- 12 个工具：`bash`, `read_file`, `write_file`, `edit_file`, `glob`, `remember`, `todo_write`, `create_task`, `list_tasks`, `get_task`, `claim_task`, `complete_task`
 - 所有工具返回字符串（成功消息或错误信息）
 - bash/文件工具受 `PermissionPolicy` 约束
