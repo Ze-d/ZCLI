@@ -16,7 +16,10 @@ agent.py: Pre-turn
   └─ sessions.save(session)        → 原子写盘
   ▼
 agent.py: Tool loop (while True)
-  ├─ _compact_if_needed(session)   → 超限则摘要
+  ├─ context.prepare(messages)
+  │   └─ 大结果落盘 → 历史裁剪 → 旧结果压缩 → 必要时摘要
+  ├─ recovery.with_retry(...)
+  │   └─ 429/529 退避；连续 529 可切 fallback model
   ├─ client.messages.create()      → LLM 调用
   ├─ session.messages.append(assistant_msg)
   ├─ 有 tool_use?
@@ -69,9 +72,14 @@ Session 生命周期:
   <body>
 ```
 
-## Context Compaction 触发条件
+## Context Compaction
 
-- `estimated_size > context_limit` (默认 50,000 tokens)
-- `len(messages) >= 8`
-- 切分点: 保留最近 ~6 条，从 assistant 边界切分
-- 旧消息 → LLM 摘要 → `<session_summary>` 块替换
+每次模型调用前都会执行便宜压缩层；各层有独立触发条件：
+
+- 当前轮工具结果总量超过 200,000 字符：最大的结果优先落盘；
+- 消息数超过 50：裁剪中间历史，但保持工具调用配对；
+- 工具结果超过 3 个：较早的大结果替换为短占位；
+- 处理后估算 token 仍超过 `ZCLI_CONTEXT_LIMIT`：保存 transcript，调用 LLM 摘要并以 `[Compacted]` 消息替换历史；
+- API 实际报告 prompt-too-long：执行 reactive compact，保留摘要与最近五条消息后重试。
+
+详细流程见 [context-compaction.md](context-compaction.md)。

@@ -16,7 +16,13 @@
 
 - [ ] 单轮对话正常
 - [ ] 多轮 tool loop 正常（bash/read_file/write_file）
-- [ ] 上下文压缩触发（>8 条消息 + 超限）
+- [ ] 超大工具结果写入 `.zcli/tool-results/`，消息仅保留路径和预览
+- [ ] 超过 50 条消息时裁剪中间历史且工具调用保持配对
+- [ ] 旧工具结果被压缩，最近 3 个保持完整
+- [ ] 超过 `ZCLI_CONTEXT_LIMIT` 后生成 `[Compacted]` 摘要并保存 transcript
+- [ ] prompt-too-long 后执行 reactive compact 并重试
+- [ ] 429/529 自动退避，配置 fallback 时连续 529 可切换模型
+- [ ] `max_tokens` 首次截断后提高输出上限，仍截断则续写
 - [ ] 记忆自动抽取
 - [ ] 错误不崩溃
 
@@ -28,4 +34,4 @@
 
 ## 测试
 
-- [ ] `pytest` 10/10 通过
+- [ ] `pytest` 全部通过

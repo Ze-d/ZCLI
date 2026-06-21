@@ -6,9 +6,9 @@
 ┌─────────────────────────────┐
 │  手动功能测试 (Prompt 验证)  │  ← docs/PROMPT_FUNCTIONAL_TESTS.md
 ├─────────────────────────────┤
-│  集成测试 (test_agent.py)    │  ← 4 tests: session, compact, memory
+│  集成测试 (test_agent.py)    │  ← tool loop、compact、恢复、memory
 ├─────────────────────────────┤
-│  单元测试 (test_*.py)        │  ← 6 tests: memory, session, tools
+│  单元测试 (test_*.py)        │  ← context、recovery、memory、session、tools
 └─────────────────────────────┘
 ```
 
@@ -16,7 +16,9 @@
 
 | 模块 | 测试数 | 覆盖内容 |
 |------|--------|----------|
-| `agent.py` | 4 | session 持久化、compact 触发/切分/阈值 |
+| `agent.py` | — | session 持久化、完整 compact、max_tokens 扩容、reactive compact |
+| `context.py` | — | 四层执行顺序、大结果落盘、预算、工具配对、transcript |
+| `recovery.py` | — | 429/529 重试、fallback model、非瞬时错误、超限识别 |
 | `memory.py` | 2 | remember+retrieve, save_extracted JSON |
 | `session.py` | 2 | round-trip, path escape 拒绝 |
 | `tools.py` | 2 | 工作区隔离, remember 工具 |
@@ -25,5 +27,5 @@
 
 1. **PermissionPolicy 单元测试** — 危险命令拒绝、路径逃逸检测
 2. **CLI 集成测试** — `--help` `--list-sessions` `--new` 参数
-3. **Config 测试** — 环境变量优先级、默认值
-4. **端到端测试** — mock Anthropic client，验证完整 tool loop
+3. **CLI 集成测试** — REPL 输入、异常显示和退出行为
+4. **属性测试** — 随机消息序列压缩后仍满足工具配对不变量

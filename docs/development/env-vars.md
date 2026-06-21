@@ -12,12 +12,19 @@
 | `ZCLI_WORKSPACE` | 否 | 当前目录 | Agent 默认工作区 |
 | `ZCLI_DATA_DIR` | 否 | `<workspace>/.zcli` | 会话和记忆存储目录 |
 | `ZCLI_CONTEXT_LIMIT` | 否 | `50000` | 触发上下文压缩的 token 阈值 |
+| `FALLBACK_MODEL_ID` | 否 | — | 连续 529 后使用的备用模型 |
+| `ZCLI_MAX_TOKENS` | 否 | `8000` | 常规模型输出上限 |
+| `ZCLI_ESCALATED_MAX_TOKENS` | 否 | `16000` | 首次输出截断后的重试上限 |
+| `ZCLI_MAX_RETRIES` | 否 | `3` | 429/529 最大调用次数 |
+| `ZCLI_MAX_RECOVERY_RETRIES` | 否 | `2` | 扩容后仍截断时的续写次数 |
 
 ## 配置优先级
 
 1. 系统环境变量（最高）
-2. `.env` 文件（由 python-dotenv 加载，`override=False`）
-3. 代码默认值（最低）
+2. `<workspace>/.zcli/config.env`
+3. `~/.zcli/config.env`
+4. `<workspace>/.env`
+5. 代码默认值（最低）
 
 ## 多厂商配置示例
 

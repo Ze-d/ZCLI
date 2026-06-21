@@ -21,3 +21,8 @@ def test_remember_tool(tmp_path: Path):
 
     assert result.startswith("Remembered")
     assert memory.list()[0].body == "默认中文回答"
+
+
+def test_unknown_tool_returns_error(tmp_path: Path):
+    tools = ToolRegistry(tmp_path, MemoryStore(tmp_path / "data"), interactive=False)
+    assert tools.execute("does_not_exist", {}) == "Error: unknown tool does_not_exist"

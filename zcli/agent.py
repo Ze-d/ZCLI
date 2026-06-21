@@ -6,7 +6,9 @@ from typing import Callable
 from anthropic import Anthropic
 
 from .config import Settings
+from .context import ContextManager
 from .memory import MemoryStore
+from .recovery import RecoveryState, is_prompt_too_long_error, with_retry
 from .session import Session, SessionStore
 from .tools import ToolRegistry
 
@@ -36,6 +38,7 @@ class Agent:
         self.memory = MemoryStore(settings.data_dir)
         self.sessions = SessionStore(settings.data_dir)
         self.tools = ToolRegistry(settings.workspace, self.memory, interactive)
+        self.context = ContextManager(settings.data_dir, settings.context_limit)
 
     def system_prompt(self, query: str) -> str:
         index = self.memory.index()
@@ -51,70 +54,145 @@ class Agent:
         ).strip()
 
     def run_turn(self, session: Session, query: str, emit: Callable[[str], None] = print) -> str:
-        turn_start = len(session.messages)
         memory_context = self.memory.render_relevant(query)
         user_content = f"{memory_context}\n\n{query}" if memory_context else query
-        session.messages.append({"role": "user", "content": user_content})
+        user_message = {"role": "user", "content": user_content}
+        turn_messages = [user_message]
+        session.messages.append(user_message)
         self.sessions.save(session)
 
+        state = RecoveryState(self.settings.model)
+        max_tokens = self.settings.max_tokens
+        emitted_text: list[str] = []
         while True:
-            self._compact_if_needed(session)
-            response = self.client.messages.create(
-                model=self.settings.model,
-                system=self.system_prompt(query),
-                messages=session.messages,
-                tools=self.tools.definitions,
-                max_tokens=self.settings.max_tokens,
-            )
-            blocks = _blocks_to_dicts(response.content)
-            session.messages.append({"role": "assistant", "content": blocks})
-            self.sessions.save(session)
-            self._compact_if_needed(session)  # 检查当前轮是否触发压缩
+            try:
+                prepared, summary = self.context.prepare(
+                    session.messages,
+                    lambda messages: self._summarize(messages, state, emit),
+                )
+                if prepared is not session.messages or summary is not None:
+                    session.messages = prepared
+                    if summary:
+                        session.summary = summary
+                    self.sessions.save(session)
 
+                response = with_retry(
+                    lambda: self.client.messages.create(
+                        model=state.current_model,
+                        system=self.system_prompt(query),
+                        messages=session.messages,
+                        tools=self.tools.definitions,
+                        max_tokens=max_tokens,
+                    ),
+                    state,
+                    max_retries=self.settings.max_retries,
+                    fallback_model=self.settings.fallback_model,
+                    emit=emit,
+                )
+            except Exception as error:
+                if is_prompt_too_long_error(error) and not state.has_attempted_reactive_compact:
+                    session.messages, session.summary = self.context.reactive_compact(
+                        session.messages,
+                        lambda messages: self._summarize(messages, state, emit),
+                    )
+                    state.has_attempted_reactive_compact = True
+                    self.sessions.save(session)
+                    emit("[context] prompt too long; compacted and retrying")
+                    continue
+                raise
+
+            blocks = _blocks_to_dicts(response.content)
             text = "\n".join(block.get("text", "") for block in blocks if block.get("type") == "text").strip()
+
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                if not state.has_escalated:
+                    state.has_escalated = True
+                    max_tokens = self.settings.escalated_max_tokens
+                    emit(f"[max_tokens] escalating {self.settings.max_tokens} -> {max_tokens}")
+                    continue
+                assistant_message = {"role": "assistant", "content": blocks}
+                session.messages.append(assistant_message)
+                turn_messages.append(assistant_message)
+                self.sessions.save(session)
+                if text:
+                    emitted_text.append(text)
+                    emit(text)
+                if state.recovery_count < self.settings.max_recovery_retries:
+                    continuation = {
+                        "role": "user",
+                        "content": "Continue from the previous response. Do not repeat completed work.",
+                    }
+                    session.messages.append(continuation)
+                    turn_messages.append(continuation)
+                    state.recovery_count += 1
+                    self.sessions.save(session)
+                    emit(f"[max_tokens] continuation {state.recovery_count}/{self.settings.max_recovery_retries}")
+                    continue
+                return "\n".join(emitted_text)
+
+            max_tokens = self.settings.max_tokens
+            state.has_escalated = False
+            assistant_message = {"role": "assistant", "content": blocks}
+            session.messages.append(assistant_message)
+            turn_messages.append(assistant_message)
+            self.sessions.save(session)
             if text:
+                emitted_text.append(text)
                 emit(text)
 
             calls = [block for block in blocks if block.get("type") == "tool_use"]
             if not calls:
-                self._extract_memories(session.messages[turn_start:])
-                return text
+                self._extract_memories(turn_messages)
+                return "\n".join(emitted_text)
 
             results = []
             for call in calls:
                 output = self.tools.execute(call["name"], call.get("input", {}))
                 emit(f"[{call['name']}] {output[:300]}")
-                results.append({"type": "tool_result", "tool_use_id": call["id"], "content": output})
-            session.messages.append({"role": "user", "content": results})
+                compact_output = self.context.persist_large_output(call["id"], output)
+                results.append({"type": "tool_result", "tool_use_id": call["id"], "content": compact_output})
+            result_message = {"role": "user", "content": results}
+            session.messages.append(result_message)
+            turn_messages.append(result_message)
             self.sessions.save(session)
 
-    def _estimate_size(self, messages: list[dict]) -> int:
-        return len(json.dumps(messages, ensure_ascii=False)) // 4
-
     def _compact_if_needed(self, session: Session) -> None:
-        if self._estimate_size(session.messages) <= self.settings.context_limit or len(session.messages) < 8:
+        """Compatibility entry point used by tests and callers from ZCLI 0.1."""
+        if len(session.messages) < 8:
             return
-        # Start the retained tail at an assistant response. Its preceding user
-        # request is represented by the summary, and any following tool_result
-        # remains paired with the retained tool_use block.
-        preferred = max(2, len(session.messages) - 6)
-        split = next(
-            (index for index in range(preferred, 0, -1)
-             if session.messages[index].get("role") == "assistant"),
-            0,
+        prepared, summary = self.context.prepare(
+            session.messages,
+            lambda messages: self._summarize(messages, RecoveryState(self.settings.model), lambda _: None),
         )
-        if not split:
-            return
-        old, recent = session.messages[:split], session.messages[split:]
-        response = self.client.messages.create(
-            model=self.settings.model,
-            messages=[{"role": "user", "content": "Summarize this conversation for continuation. Preserve user preferences, decisions, files changed, pending work, and errors.\n\n" + json.dumps(old, ensure_ascii=False)[:120_000]}],
-            max_tokens=1500,
+        if prepared is not session.messages or summary:
+            session.messages = prepared
+            if summary:
+                session.summary = summary
+            self.sessions.save(session)
+
+    def _summarize(self, messages: list[dict], state: RecoveryState, emit: Callable[[str], None]) -> str:
+        conversation = json.dumps(messages, ensure_ascii=False, default=str)[:120_000]
+        prompt = (
+            "Summarize this coding-agent conversation so work can continue. Preserve the current goal, "
+            "user preferences and constraints, key findings, changed files, errors, and remaining work.\n\n"
+            + conversation
         )
-        summary = "\n".join(block.get("text", "") for block in _blocks_to_dicts(response.content) if block.get("type") == "text")
-        session.summary = summary
-        session.messages = [{"role": "user", "content": f"<session_summary>\n{summary}\n</session_summary>"}] + recent
-        self.sessions.save(session)
+        response = with_retry(
+            lambda: self.client.messages.create(
+                model=state.current_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2_000,
+            ),
+            state,
+            max_retries=self.settings.max_retries,
+            fallback_model=self.settings.fallback_model,
+            emit=emit,
+        )
+        return "\n".join(
+            block.get("text", "")
+            for block in _blocks_to_dicts(response.content)
+            if block.get("type") == "text"
+        ).strip()
 
     def _extract_memories(self, turn_messages: list[dict]) -> None:
         dialogue = json.dumps(turn_messages, ensure_ascii=False)[:12_000]
