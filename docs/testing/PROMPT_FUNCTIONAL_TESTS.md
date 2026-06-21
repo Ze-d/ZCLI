@@ -864,6 +864,14 @@ python -m pytest -q tests/test_agent.py -k max_tokens
 python -m pytest -q tests/test_tools.py -k unknown_tool
 ```
 
+### ERR-06 旧 Session 恢复时自动修复（P1，故障注入）
+
+```powershell
+python -m pytest -q tests/test_session.py -k repair
+```
+
+**通过标准**：仅在 `SessionStore.load()` 恢复会话时扫描一次；缺失/部分结果会补齐，孤立结果会移除并原子保存；Agent Loop 和每次 Provider 调用前不重复扫描。
+
 ### CFG-01 指定工作区（P0，真实 Provider）
 
 以 `--workspace $TestRoot` 启动后输入：
@@ -928,7 +936,7 @@ python -m pytest -q tests/test_config_recovery.py
 7. MCP：MCP-01 至 MCP-05；有独立 Zotero Server 时执行 MCP-06。
 8. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
 9. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
-10. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-05、CFG-03。
+10. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-06、CFG-03。
 11. 边界：BND-01。
 
 每个用例建议记录：
@@ -955,6 +963,7 @@ python -m pytest -q tests/test_config_recovery.py
 | `bash` | FT-08、FT-09 |
 | `remember` | MEM-01、MEM-06 |
 | 工具错误包装 | FT-05、ERR-01、ERR-05 |
+| tool_use/tool_result 恢复扫描 | ERR-06 |
 | 工作区隔离 | SEC-01、SEC-02、CFG-01 |
 | 硬拒绝策略 | SEC-03 |
 | 交互审批 | SEC-04、SEC-05、SEC-06 |
@@ -976,7 +985,7 @@ python -m pytest -q tests/test_config_recovery.py
 | MCP 错误与重复连接 | MCP-03 |
 | MCP 权限与进程生命周期 | MCP-04 |
 | Streamable HTTP 外部 Server | MCP-04、MCP-06 |
-| Session 原子持久化/恢复 | SES-01、SES-02 |
+| Session 原子持久化/恢复 | SES-01、SES-02、ERR-06 |
 | Session 隔离/校验/列表 | SES-03 至 SES-06 |
 | Memory 索引与召回 | MEM-01 至 MEM-03 |
 | 自动记忆提取与容错 | MEM-04、MEM-05、MEM-07 |
