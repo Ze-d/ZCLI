@@ -2,50 +2,57 @@
 
 from __future__ import annotations
 
+import ctypes
 import shutil
 import sys
 from typing import Sequence
 
 from .config import Settings
 
+# ── Enable ANSI on Windows Terminal ────────────────────────────────────
+def _enable_windows_ansi() -> None:
+    """Enable virtual terminal processing on Windows 10+."""
+    if sys.platform != "win32":
+        return
+    kernel32 = ctypes.windll.kernel32
+    for handle_id in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+        handle = kernel32.GetStdHandle(handle_id)
+        mode = ctypes.c_ulong()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+
+_enable_windows_ansi()
+
 # ── ANSI escape sequences ──────────────────────────────────────────────
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
 
-# 8-bit colors — avoid termcolored dependencies
+# 4-bit colors
 _CYAN = "\033[36m"
 _GREEN = "\033[32m"
 _YELLOW = "\033[33m"
-_BLUE = "\033[34m"
 _MAGENTA = "\033[35m"
-_RED = "\033[31m"
 _WHITE = "\033[37m"
 
 # bright variants
 _BRIGHT_CYAN = "\033[96m"
-_BRIGHT_GREEN = "\033[92m"
-_BRIGHT_YELLOW = "\033[93m"
-_BRIGHT_BLUE = "\033[94m"
-_BRIGHT_MAGENTA = "\033[95m"
 _BRIGHT_WHITE = "\033[97m"
 
-# ── Helpers ────────────────────────────────────────────────────────────
+# ── Style helpers (flat, no nesting needed) ────────────────────────────
 
-def _c(text: str, color: str) -> str:
-    """Wrap *text* with *color* and reset."""
-    return f"{color}{text}{_RESET}"
+def _style(text: str, *codes: str) -> str:
+    """Apply one or more SGR codes, single reset at end."""
+    return f"{''.join(codes)}{text}{_RESET}"
 
-def bold(text: str) -> str:      return _c(text, _BOLD)
-def dim(text: str) -> str:       return _c(text, _DIM)
-def cyan(text: str) -> str:      return _c(text, _CYAN)
-def green(text: str) -> str:     return _c(text, _GREEN)
-def yellow(text: str) -> str:    return _c(text, _YELLOW)
-def blue(text: str) -> str:      return _c(text, _BLUE)
-def magenta(text: str) -> str:   return _c(text, _MAGENTA)
-def red(text: str) -> str:       return _c(text, _RED)
-def white(text: str) -> str:     return _c(text, _WHITE)
-def bright_cyan(text: str) -> str:    return _c(text, _BRIGHT_CYAN)
+def dim(text: str) -> str:             return _style(text, _DIM)
+def bold(text: str) -> str:            return _style(text, _BOLD)
+def cyan(text: str) -> str:            return _style(text, _CYAN)
+def green(text: str) -> str:           return _style(text, _GREEN)
+def yellow(text: str) -> str:          return _style(text, _YELLOW)
+def magenta(text: str) -> str:         return _style(text, _MAGENTA)
+def bright_cyan(text: str) -> str:     return _style(text, _BRIGHT_CYAN)
+def bold_white(text: str) -> str:      return _style(text, _BOLD, _WHITE)
 
 # ── Logo ───────────────────────────────────────────────────────────────
 
@@ -83,7 +90,7 @@ def show_banner(settings: Settings, session_id: str, version: str = "0.1.0") -> 
     # ── logo + tagline ─────────────────────────────────────────────
     for line in ZCLI_LOGO.strip("\n").splitlines():
         print(cyan(line))
-    print(f"  {bold(white('Personal Coding Agent'))}  {dim(tag)}")
+    print(f"  {bold_white('Personal Coding Agent')}  {dim(tag)}")
     print()
 
     # ── model & endpoint ───────────────────────────────────────────

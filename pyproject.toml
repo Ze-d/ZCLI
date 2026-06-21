@@ -5,7 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zcli-agent"
 version = "0.1.0"
-description = "A small, persistent personal coding agent inspired by learn-claude-code s20."
+description = "A small, persistent personal coding agent in your terminal."
+readme = "README.md"
+license = "MIT"
+authors = [
+  {name = "Ze-d"},
+]
+keywords = ["cli", "agent", "ai", "coding", "llm", "anthropic", "claude"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Artificial Intelligence",
+  "Topic :: Utilities",
+]
 requires-python = ">=3.11"
 dependencies = [
   "anthropic>=0.25.0",
@@ -16,11 +34,17 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[project.urls]
+Homepage = "https://github.com/Ze-d/ZCLI"
+Repository = "https://github.com/Ze-d/ZCLI"
+Issues = "https://github.com/Ze-d/ZCLI/issues"
+
 [project.scripts]
 zcli = "zcli.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["zcli*"]
+include = ["zcli", "zcli.*"]
+exclude = ["zcli.Lib*", "zcli.Scripts*", "zcli.include*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

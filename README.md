@@ -1,63 +1,140 @@
 # ZCLI
 
-ZCLI 是一个从 `learn-claude-code/s20` 蓝图迁移出的个人 Coding Agent 初版。它没有直接复制 2100 行单文件，而是先完成最关键的两层持久化：
+[![CI](https://github.com/Ze-d/ZCLI/actions/workflows/ci.yml/badge.svg)](https://github.com/Ze-d/ZCLI/actions/workflows/ci.yml)
 
-- Session：每次用户输入、模型响应和工具结果后原子写盘，可跨进程继续对话。
-- Memory：独立 Markdown 记忆、`MEMORY.md` 索引、相关记忆注入、显式 `remember` 工具和每轮自动提取。
+> 你的终端个人编程 Agent
 
-当前还包含受工作区约束的 `bash/read/write/edit/glob` 工具、基础权限策略和上下文压缩。Task、Team、Cron、Worktree 和真实 MCP 将作为后续可选模块迁移。
+ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、长期记忆和会话持久化。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
 
-## 安装
+## 快速安装
 
-```powershell
-cd C:\02-study\MyProjects\ZCLI
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-Copy-Item .env.example .env
+### pipx (推荐，环境隔离)
+
+```bash
+# 从 GitHub 安装
+pipx install git+https://github.com/Ze-d/ZCLI.git
+
+# 或从本地安装
+pipx install /path/to/ZCLI
 ```
 
-编辑 `.env`，配置 `ANTHROPIC_API_KEY` 和 `MODEL_ID`。
+### pip (全局安装)
+
+```bash
+# 从 GitHub
+pip install git+https://github.com/Ze-d/ZCLI.git
+
+# 从本地构建
+pip install /path/to/ZCLI
+
+# 未来从 PyPI 安装
+pip install zcli-agent
+```
+
+### 开发安装
+
+```bash
+git clone https://github.com/Ze-d/ZCLI.git
+cd ZCLI
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+
+pip install -e ".[dev]"
+```
+
+## 配置
+
+```bash
+# 复制配置模板
+cp .env.example .env
+```
+
+编辑 `.env`，填入你的 API key：
+
+```ini
+ANTHROPIC_API_KEY=sk-ant-xxx
+MODEL_ID=claude-sonnet-4-6
+
+# 可选：使用其他厂商
+# ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+# MODEL_ID=deepseek-chat
+```
+
+| 变量 | 必需 | 默认 | 说明 |
+|------|------|------|------|
+| `ANTHROPIC_API_KEY` | 是 | — | API 密钥 |
+| `MODEL_ID` | 否 | `claude-sonnet-4-6` | 模型 ID |
+| `ANTHROPIC_BASE_URL` | 否 | `https://api.anthropic.com` | API 端点 |
+| `ZCLI_WORKSPACE` | 否 | 当前目录 | 工作区 |
+| `ZCLI_DATA_DIR` | 否 | `<workspace>/.zcli` | 数据目录 |
 
 ## 使用
 
-```powershell
-# 当前目录作为 Agent 工作区
+```bash
+# 启动 Agent
 zcli
 
-# 指定工作区和会话
-zcli --workspace C:\02-study\MyProjects\my-project --session my-project
+# 指定工作区
+zcli --workspace ~/my-project
 
-# 查看会话
+# 多会话管理
+zcli --session my-work
+zcli --new --session clean-start
+
+# 查看保存的会话
 zcli --list-sessions
 ```
 
-CLI 内置命令：
+REPL 内置命令：
 
-- `/memory`：查看长期记忆索引
-- `/sessions`：查看保存的会话
-- `/exit`：退出
+| 命令 | 效果 |
+|------|------|
+| `/exit` `/quit` | 退出 |
+| `/memory` | 查看长期记忆 |
+| `/sessions` | 列出已保存会话 |
 
-运行数据默认保存在工作区的 `.zcli/`，也可以通过 `ZCLI_DATA_DIR` 改为统一的个人数据目录。
+## 构建 & 发布
 
-## 目录
+### 自动发布（GitHub Actions）
 
-```text
-zcli/
-  agent.py        Agent Loop、压缩和自动记忆提取
-  config.py       环境配置
-  memory.py       长期记忆
-  session.py      会话持久化
-  permissions.py 权限策略
-  tools.py        工具注册与执行
-  cli.py          命令行入口
+推送 `v*` tag 自动触发构建 → PyPI + GitHub Release：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-## 当前边界
+首次使用需在 PyPI 配置 [Trusted Publisher](https://docs.pypi.org/trusted-publishers/)（OIDC），指向 GitHub 仓库 `Ze-d/ZCLI`。
 
-这是个人 Agent 的最小可靠内核，不是完整 Claude Code 克隆：
+### 手动构建
 
-- Shell 仍通过系统 shell 执行，危险操作依赖 deny/ask 策略；请不要把它暴露为无人值守的公共服务。
-- 自动记忆提取会多产生一次小模型调用。
-- 尚未迁移 s20 的 Team、Cron、Task Graph、Worktree 和 Mock MCP。
+```bash
+pip install build twine
+python -m build --no-isolation  # Windows / --no-isolation 可省略
 
+# 产物在 dist/
+# zcli_agent-0.1.0-py3-none-any.whl
+# zcli_agent-0.1.0.tar.gz
+
+twine upload dist/*
+```
+
+## 文档
+
+详细文档见 [docs/](docs/):
+- [架构总览](docs/architecture/overview.md)
+- [模块职责](docs/architecture/module-map.md)
+- [环境变量](docs/development/env-vars.md)
+- [测试策略](docs/testing/test-strategy.md)
+
+## 技术栈
+
+Python 3.11+ · anthropic · python-dotenv · pyyaml · pytest
+
+## License
+
+MIT
