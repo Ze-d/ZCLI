@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from .memory import MemoryStore
+from .mcp import MCPManager
 from .permissions import PermissionPolicy
+from .skills import SkillRegistry
 from .tasks import TaskStore
 
 if TYPE_CHECKING:
@@ -22,10 +24,14 @@ class ToolRegistry:
         memory: MemoryStore,
         interactive: bool = True,
         tasks: TaskStore | None = None,
+        skills: SkillRegistry | None = None,
+        mcp: MCPManager | None = None,
     ):
         self.workspace = workspace.resolve()
         self.memory = memory
         self.tasks = tasks or TaskStore(memory.directory.parent)
+        self.skills = skills or SkillRegistry(self.workspace / "skills")
+        self.mcp = mcp or MCPManager(self.workspace)
         self.policy = PermissionPolicy(self.workspace, interactive)
         self.handlers: dict[str, Callable[..., str]] = {
             "bash": self._run_bash,
@@ -39,11 +45,13 @@ class ToolRegistry:
             "get_task": self.get_task,
             "claim_task": self.claim_task,
             "complete_task": self.complete_task,
+            "load_skill": self.load_skill,
+            "connect_mcp": self.connect_mcp,
         }
 
     @property
     def definitions(self) -> list[dict]:
-        return [
+        builtins = [
             self._tool("bash", "Run a shell command in the workspace.", {"command": {"type": "string"}}, ["command"]),
             self._tool("read_file", "Read a UTF-8 text file.", {"path": {"type": "string"}}, ["path"]),
             self._tool("write_file", "Write a UTF-8 text file inside the workspace.", {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
@@ -56,7 +64,10 @@ class ToolRegistry:
             self._tool("get_task", "Get complete durable task details.", {"task_id": {"type": "string"}}, ["task_id"]),
             self._tool("claim_task", "Claim an unblocked pending task.", {"task_id": {"type": "string"}, "owner": {"type": "string"}}, ["task_id"]),
             self._tool("complete_task", "Complete an in-progress task and report newly unblocked tasks.", {"task_id": {"type": "string"}}, ["task_id"]),
+            self._tool("load_skill", "Load the full SKILL.md instructions for a relevant skill from the catalog.", {"name": {"type": "string"}}, ["name"]),
+            self._tool("connect_mcp", "Connect to a configured MCP server and discover its external tools.", {"name": {"type": "string"}}, ["name"]),
         ]
+        return builtins + self.mcp.definitions()
 
     @staticmethod
     def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -67,6 +78,11 @@ class ToolRegistry:
             return self.policy.check_command(str(arguments.get("command", "")))
         if name in {"read_file", "write_file", "edit_file"}:
             return self.policy.check_path(str(arguments.get("path", "")))
+        if name == "connect_mcp":
+            return self.policy.confirm_action(f"connect to MCP server {arguments.get('name', '')!r}")
+        mcp_tool = self.mcp.tools.get(name)
+        if mcp_tool and mcp_tool.destructive:
+            return self.policy.confirm_action(f"run destructive MCP tool {name!r}")
         return None
 
     def execute(
@@ -83,14 +99,16 @@ class ToolRegistry:
             except Exception as exc:
                 return f"Error: {type(exc).__name__}: {exc}"
         handler = self.handlers.get(name)
-        if not handler:
+        if not handler and name not in self.mcp.tools:
             return f"Error: unknown tool {name}"
         try:
             if not permission_checked:
                 error = self.permission_error(name, arguments)
                 if error:
                     return f"Permission denied: {error}"
-            return handler(**arguments)
+            if handler:
+                return handler(**arguments)
+            return self.mcp.call(name, arguments)
         except Exception as exc:
             return f"Error: {type(exc).__name__}: {exc}"
 
@@ -185,3 +203,9 @@ class ToolRegistry:
 
     def complete_task(self, task_id: str) -> str:
         return self.tasks.complete(task_id)
+
+    def load_skill(self, name: str) -> str:
+        return self.skills.load(name)
+
+    def connect_mcp(self, name: str) -> str:
+        return self.mcp.connect(name)

@@ -3,7 +3,8 @@
 ## 功能改进
 
 - [ ] 流式输出（streaming text）
-- [ ] MCP 客户端集成（连接外部工具服务器）
+- [x] MCP 客户端集成（stdio 与 Streamable HTTP、JSON/SSE、动态注册与调用）
+- [ ] MCP 完整 runtime（OAuth、Resources、GET 通知流与自动重连）
 - [ ] 多 Agent 编排 (Team / Task Graph)
 - [ ] Cron 定时任务
 - [ ] Worktree 隔离执行

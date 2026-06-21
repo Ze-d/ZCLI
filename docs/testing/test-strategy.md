@@ -8,7 +8,7 @@
 ├─────────────────────────────┤
 │  集成测试 (test_agent.py)    │  ← tool loop、compact、恢复、memory
 ├─────────────────────────────┤
-│  单元测试 (test_*.py)        │  ← tasks、todos、hooks、context、recovery、memory、session、tools
+│  单元测试 (test_*.py)        │  ← skills、MCP、tasks、hooks、context、recovery、memory、session、tools
 └─────────────────────────────┘
 ```
 
@@ -22,8 +22,10 @@
 | `hooks.py` | — | 注册顺序、上下文合并、fail-closed、四事件集成、Stop 防循环 |
 | `tasks.py` | — | DAG 依赖、状态机、解锁、缺失依赖、跨实例恢复 |
 | TodoWrite | — | 输入校验、Session 持久化、system prompt 注入、三轮提醒 |
+| `skills.py` | — | Frontmatter、Catalog 隔离、按需加载、热重扫、诊断和预算 |
+| `mcp.py` | — | 配置优先级、名称规范化、真实 stdio/HTTP 握手、JSON/SSE、动态工具池、权限和关闭 |
 | `memory.py` | 2 | remember+retrieve, save_extracted JSON |
-| `session.py` | 2 | round-trip, path escape 拒绝 |
+| `session.py` | — | round-trip、路径逃逸、tool_use/tool_result 历史修复与持久化 |
 | `tools.py` | 2 | 工作区隔离, remember 工具 |
 
 ## 推荐补充

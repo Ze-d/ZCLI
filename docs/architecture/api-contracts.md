@@ -24,6 +24,8 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 | `/sessions` | 列出已保存会话 |
 | `/todos` | 显示当前 Session Todo |
 | `/tasks` | 显示持久 Task Graph |
+| `/skills` | 显示 Skill Catalog 和扫描诊断 |
+| `/mcp` | 显示 MCP 配置、连接状态和工具数量 |
 
 ## 配置契约
 
@@ -38,6 +40,18 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 | `ZCLI_DATA_DIR` | 否 | `<workspace>/.zcli` | 数据目录 |
 | `ZCLI_CONTEXT_LIMIT` | 否 | `50000` | 上下文 token 上限 |
 
+MCP 配置来自 `~/.zcli/mcp.json`、`<workspace>/.mcp.json` 和 `<workspace>/.zcli/mcp.json`（后者优先）。每个 Server 使用以下二选一结构：
+
+```json
+{"transport": "stdio", "command": "python", "args": ["server.py"]}
+```
+
+```json
+{"transport": "streamable_http", "url": "http://127.0.0.1:23120/mcp", "headers": {}}
+```
+
+省略 `transport` 时默认为 `stdio`。HTTP `headers` 支持 `${ENV_NAME}` 模板，但不能覆盖 MCP Session、协议版本和基础 HTTP transport Header。
+
 ## Agent 内部接口
 
 ### `Agent.run_turn(session, query, emit=print) -> str`
@@ -50,6 +64,7 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 
 ### `ToolRegistry.execute(name, arguments) -> str`
 
-- 12 个工具：`bash`, `read_file`, `write_file`, `edit_file`, `glob`, `remember`, `todo_write`, `create_task`, `list_tasks`, `get_task`, `claim_task`, `complete_task`
+- 14 个内置工具：`bash`, `read_file`, `write_file`, `edit_file`, `glob`, `remember`, `todo_write`, `create_task`, `list_tasks`, `get_task`, `claim_task`, `complete_task`, `load_skill`, `connect_mcp`
+- 连接后动态增加 `mcp__<server>__<tool>` 工具；定义来自远端 `tools/list`
 - 所有工具返回字符串（成功消息或错误信息）
-- bash/文件工具受 `PermissionPolicy` 约束
+- bash/文件工具、MCP 连接和 destructive MCP 工具受 `PermissionPolicy` 约束

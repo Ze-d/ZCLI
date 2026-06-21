@@ -31,6 +31,15 @@
 - [ ] 三个非 Todo 工具调用后注入更新提醒
 - [ ] Task Graph 能创建依赖、阻止提前认领并在完成上游后解锁
 - [ ] 新 Session 通过 `/tasks` 恢复持久任务
+- [ ] `/skills` 只显示名称和描述，不泄漏 SKILL.md 正文
+- [ ] 相关任务先调用 load_skill，再遵守完整 Skill 指令
+- [ ] 损坏或重名 Skill 产生诊断但不阻止其他 Skill 加载
+- [ ] MCP stdio 完成 initialize、tools/list、tools/call，连接后工具池动态刷新
+- [ ] Streamable HTTP 支持 JSON/SSE 响应，携带 Session ID 和协商后的协议版本
+- [ ] HTTP 关闭发送 DELETE；URL、Header、超时与环境变量配置校验正确
+- [ ] MCP 名称规范化无冲突，连接与 destructive 工具均经过审批
+- [ ] `/mcp` 展示配置/连接状态，退出时子进程被回收
+- [ ] Session 恢复时单次扫描，自动补齐缺失结果并移除孤立结果
 - [ ] 记忆自动抽取
 - [ ] 错误不崩溃
 

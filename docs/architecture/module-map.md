@@ -13,7 +13,9 @@
 | 配置 | `zcli/config.py` | 环境变量 / .env 加载 | `Settings` (frozen dataclass) |
 | 会话存储 | `zcli/session.py` | JSON 持久化、CRUD、原子写 | `Session`, `SessionStore` |
 | 长期记忆 | `zcli/memory.py` | Markdown+YAML 文件存储、索引、检索 | `MemoryStore` |
-| 工具注册 | `zcli/tools.py` | 12 个工具的注册、定义生成、执行分发 | `ToolRegistry` |
+| Skill 注册 | `zcli/skills.py` | 扫描、Catalog、Frontmatter、按需加载 | `SkillRegistry`, `Skill` |
+| MCP 客户端 | `zcli/mcp.py` | 配置合并、stdio/HTTP transport、发现、调用、会话关闭 | `MCPManager`, `StdioMCPClient`, `StreamableHTTPMCPClient` |
+| 工具注册 | `zcli/tools.py` | 14 个内置工具与 MCP 动态工具的定义、执行分发 | `ToolRegistry` |
 | 权限策略 | `zcli/permissions.py` | 路径逃逸检测、危险命令拒绝、交互审批 | `PermissionPolicy` |
 | 终端展示 | `zcli/display.py` | ANSI 颜色、LOGO、启动 banner | `show_banner()` |
 
@@ -27,6 +29,8 @@ cli.py ──→ agent.py ──→ session.py
            ├── recovery.py
            ├── hooks.py
            ├── tasks.py
+           ├── skills.py
+           ├── mcp.py
            └── config.py
            └── display.py
 ```
