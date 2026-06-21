@@ -71,6 +71,15 @@ def main(argv: list[str] | None = None) -> int:
                 for error in agent.mcp.errors:
                     print(f"[mcp error] {error}")
                 continue
+            if query == "/team":
+                print(agent.team.render())
+                inbox = agent.team.check_inbox()
+                if inbox != "Inbox empty.":
+                    print(inbox)
+                continue
+            if query == "/worktrees":
+                print(agent.worktrees.render())
+                continue
             try:
                 agent.run_turn(session, query)
             except Exception as exc:

@@ -74,6 +74,8 @@ _CAPABILITIES: Sequence[tuple[str, str]] = [
     ("Planning",     "Session todos + durable dependency task graph"),
     ("Skills",       "Catalog in prompt, full instructions on demand"),
     ("MCP",          "Connect stdio/HTTP servers and add tools dynamically"),
+    ("Agents",       "Isolated subagents + autonomous teammate threads"),
+    ("Worktrees",    "Task-bound git worktree isolation"),
     ("Compact",      "Auto-summarize long context"),
     ("Multi-LLM",    "Anthropic / DeepSeek / MiniMax / GLM / Kimi …"),
     ("Sandbox",     "Path jail + hard-deny dangerous commands"),
@@ -111,7 +113,7 @@ def show_banner(settings: Settings, session_id: str, version: str = "0.1.0") -> 
     print()
 
     # ── commands ───────────────────────────────────────────────────
-    print(f"  {bold('Commands')}    /exit  /quit  /memory  /sessions  /todos  /tasks  /skills  /mcp")
+    print(f"  {bold('Commands')}    /exit /memory /sessions /todos /tasks /skills /mcp /team /worktrees")
     print(bright_cyan("─" * min(term_width, 80)))
     print()
 

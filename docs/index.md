@@ -14,6 +14,7 @@ ZCLI 是一个轻量级个人编程 Agent，运行在终端中，具备多轮对
 | Todo 与 Task Graph | [architecture/planning-and-tasks.md](architecture/planning-and-tasks.md) |
 | Skill 两级加载 | [architecture/skills.md](architecture/skills.md) |
 | MCP 外部工具接入 | [architecture/mcp.md](architecture/mcp.md) |
+| Subagent、Team 与 Worktree | [architecture/agents-teams-worktrees.md](architecture/agents-teams-worktrees.md) |
 | 环境搭建 | [development/setup.md](development/setup.md) |
 | 常用命令 | [development/commands.md](development/commands.md) |
 | 环境变量 | [development/env-vars.md](development/env-vars.md) |
@@ -27,4 +28,4 @@ ZCLI 是一个轻量级个人编程 Agent，运行在终端中，具备多轮对
 - **包管理**: setuptools + pip editable install
 - **核心依赖**: `anthropic` `httpx` `python-dotenv` `pyyaml`
 - **入口**: `zcli` 命令 / `python -m zcli`
-- **测试**: pytest，覆盖 Agent、Memory、Session、Skill、MCP、工具、压缩和错误恢复核心路径
+- **测试**: pytest，覆盖 Agent、Memory、Session、Skill、MCP、Subagent、Team、Worktree、压缩和错误恢复核心路径

@@ -15,6 +15,9 @@ from .tasks import TaskStore
 
 if TYPE_CHECKING:
     from .session import Session
+    from .subagents import SubagentRunner
+    from .teams import TeamManager
+    from .worktrees import WorktreeManager
 
 
 class ToolRegistry:
@@ -26,12 +29,18 @@ class ToolRegistry:
         tasks: TaskStore | None = None,
         skills: SkillRegistry | None = None,
         mcp: MCPManager | None = None,
+        subagents: SubagentRunner | None = None,
+        team: TeamManager | None = None,
+        worktrees: WorktreeManager | None = None,
     ):
         self.workspace = workspace.resolve()
         self.memory = memory
         self.tasks = tasks or TaskStore(memory.directory.parent)
         self.skills = skills or SkillRegistry(self.workspace / "skills")
         self.mcp = mcp or MCPManager(self.workspace)
+        self.subagents = subagents
+        self.team = team
+        self.worktrees = worktrees
         self.policy = PermissionPolicy(self.workspace, interactive)
         self.handlers: dict[str, Callable[..., str]] = {
             "bash": self._run_bash,
@@ -48,6 +57,26 @@ class ToolRegistry:
             "load_skill": self.load_skill,
             "connect_mcp": self.connect_mcp,
         }
+        if self.subagents:
+            self.handlers["run_subagent"] = self.run_subagent
+        if self.team:
+            self.handlers.update({
+                "spawn_teammate": self.spawn_teammate,
+                "list_teammates": self.list_teammates,
+                "send_message": self.send_message,
+                "check_inbox": self.check_inbox,
+                "request_shutdown": self.request_shutdown,
+                "request_plan": self.request_plan,
+                "review_plan": self.review_plan,
+            })
+        if self.worktrees:
+            self.handlers.update({
+                "create_worktree": self.create_worktree,
+                "list_worktrees": self.list_worktrees,
+                "bind_task_worktree": self.bind_task_worktree,
+                "remove_worktree": self.remove_worktree,
+                "keep_worktree": self.keep_worktree,
+            })
 
     @property
     def definitions(self) -> list[dict]:
@@ -67,6 +96,26 @@ class ToolRegistry:
             self._tool("load_skill", "Load the full SKILL.md instructions for a relevant skill from the catalog.", {"name": {"type": "string"}}, ["name"]),
             self._tool("connect_mcp", "Connect to a configured MCP server and discover its external tools.", {"name": {"type": "string"}}, ["name"]),
         ]
+        if self.subagents:
+            builtins.append(self.subagents.tool_definition())
+        if self.team:
+            builtins.extend([
+                self._tool("spawn_teammate", "Spawn a named autonomous teammate in a background thread. Teammates cannot spawn teammates.", {"name": {"type": "string"}, "role": {"type": "string"}, "prompt": {"type": "string"}}, ["name", "role", "prompt"]),
+                self._tool("list_teammates", "List teammate roles, status and unread lead messages.", {}, []),
+                self._tool("send_message", "Send a message from lead to a teammate.", {"to": {"type": "string"}, "content": {"type": "string"}}, ["to", "content"]),
+                self._tool("check_inbox", "Read and consume messages sent to the lead.", {}, []),
+                self._tool("request_shutdown", "Ask a teammate to stop at a safe boundary.", {"teammate": {"type": "string"}}, ["teammate"]),
+                self._tool("request_plan", "Request a plan from a teammate for a task.", {"teammate": {"type": "string"}, "task": {"type": "string"}}, ["teammate", "task"]),
+                self._tool("review_plan", "Approve or reject a teammate plan request.", {"request_id": {"type": "string"}, "approve": {"type": "boolean"}, "feedback": {"type": "string"}}, ["request_id", "approve"]),
+            ])
+        if self.worktrees:
+            builtins.extend([
+                self._tool("create_worktree", "Create an isolated git worktree and optional task binding.", {"name": {"type": "string"}, "task_id": {"type": "string"}}, ["name"]),
+                self._tool("list_worktrees", "List ZCLI-managed worktrees.", {}, []),
+                self._tool("bind_task_worktree", "Bind an existing task to an existing worktree.", {"task_id": {"type": "string"}, "name": {"type": "string"}}, ["task_id", "name"]),
+                self._tool("remove_worktree", "Remove a managed worktree. Refuses changed work unless discard_changes is true.", {"name": {"type": "string"}, "discard_changes": {"type": "boolean"}}, ["name"]),
+                self._tool("keep_worktree", "Keep a worktree and record it for manual review.", {"name": {"type": "string"}}, ["name"]),
+            ])
         return builtins + self.mcp.definitions()
 
     @staticmethod
@@ -80,6 +129,11 @@ class ToolRegistry:
             return self.policy.check_path(str(arguments.get("path", "")))
         if name == "connect_mcp":
             return self.policy.confirm_action(f"connect to MCP server {arguments.get('name', '')!r}")
+        if name == "remove_worktree":
+            action = f"remove worktree {arguments.get('name', '')!r}"
+            if arguments.get("discard_changes"):
+                action += " and discard its changes"
+            return self.policy.confirm_action(action)
         mcp_tool = self.mcp.tools.get(name)
         if mcp_tool and mcp_tool.destructive:
             return self.policy.confirm_action(f"run destructive MCP tool {name!r}")
@@ -209,3 +263,44 @@ class ToolRegistry:
 
     def connect_mcp(self, name: str) -> str:
         return self.mcp.connect(name)
+
+    def run_subagent(self, name: str, role: str, prompt: str, task_id: str = "", worktree: str = "") -> str:
+        if not self.subagents:
+            return "Error: subagents are unavailable"
+        return self.subagents.run(name, role, prompt, task_id, worktree)
+
+    def spawn_teammate(self, name: str, role: str, prompt: str) -> str:
+        return self.team.spawn(name, role, prompt) if self.team else "Error: team is unavailable"
+
+    def list_teammates(self) -> str:
+        return self.team.render() if self.team else "Error: team is unavailable"
+
+    def send_message(self, to: str, content: str) -> str:
+        return self.team.send_message(to, content) if self.team else "Error: team is unavailable"
+
+    def check_inbox(self) -> str:
+        return self.team.check_inbox() if self.team else "Error: team is unavailable"
+
+    def request_shutdown(self, teammate: str) -> str:
+        return self.team.request_shutdown(teammate) if self.team else "Error: team is unavailable"
+
+    def request_plan(self, teammate: str, task: str) -> str:
+        return self.team.request_plan(teammate, task) if self.team else "Error: team is unavailable"
+
+    def review_plan(self, request_id: str, approve: bool, feedback: str = "") -> str:
+        return self.team.review_plan(request_id, approve, feedback) if self.team else "Error: team is unavailable"
+
+    def create_worktree(self, name: str, task_id: str = "") -> str:
+        return self.worktrees.create(name, task_id) if self.worktrees else "Error: worktrees are unavailable"
+
+    def list_worktrees(self) -> str:
+        return self.worktrees.render() if self.worktrees else "Error: worktrees are unavailable"
+
+    def bind_task_worktree(self, task_id: str, name: str) -> str:
+        return self.worktrees.bind(task_id, name) if self.worktrees else "Error: worktrees are unavailable"
+
+    def remove_worktree(self, name: str, discard_changes: bool = False) -> str:
+        return self.worktrees.remove(name, discard_changes) if self.worktrees else "Error: worktrees are unavailable"
+
+    def keep_worktree(self, name: str) -> str:
+        return self.worktrees.keep(name) if self.worktrees else "Error: worktrees are unavailable"

@@ -2,6 +2,8 @@ from pathlib import Path
 
 from zcli.memory import MemoryStore
 from zcli.tools import ToolRegistry
+from zcli.agent import Agent
+from zcli.config import Settings
 
 
 def test_file_tools_stay_in_workspace(tmp_path: Path):
@@ -45,3 +47,24 @@ def test_planning_tools_are_exposed_to_model(tmp_path: Path):
         "claim_task",
         "complete_task",
     } <= names
+
+
+def test_full_agent_exposes_subagent_team_and_worktree_tools(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agent = Agent(Settings(workspace, tmp_path / "data", "fake", None), client=object(), interactive=False)
+    try:
+        names = {definition["name"] for definition in agent.tools.definitions}
+        assert len(names) == 27
+        assert {
+            "run_subagent",
+            "spawn_teammate",
+            "send_message",
+            "request_plan",
+            "create_worktree",
+            "bind_task_worktree",
+            "remove_worktree",
+        } <= names
+        assert agent.tools.execute("remove_worktree", {"name": "demo"}).startswith("Permission denied")
+    finally:
+        agent.close()
