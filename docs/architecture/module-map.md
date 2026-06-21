@@ -8,6 +8,7 @@
 | Agent 核心 | `zcli/agent.py` | LLM 编排、工具循环、记忆抽取 | `Agent.run_turn()` |
 | 上下文管理 | `zcli/context.py` | 分层压缩、大结果与 transcript 持久化 | `ContextManager` |
 | 错误恢复 | `zcli/recovery.py` | 429/529 重试、fallback、超限识别 | `RecoveryState`, `with_retry()` |
+| Hook 系统 | `zcli/hooks.py` | 生命周期扩展、权限 Hook、阻断与续跑 | `HookManager`, `HookResult` |
 | 配置 | `zcli/config.py` | 环境变量 / .env 加载 | `Settings` (frozen dataclass) |
 | 会话存储 | `zcli/session.py` | JSON 持久化、CRUD、原子写 | `Session`, `SessionStore` |
 | 长期记忆 | `zcli/memory.py` | Markdown+YAML 文件存储、索引、检索 | `MemoryStore` |
@@ -23,6 +24,7 @@ cli.py ──→ agent.py ──→ session.py
            │              tools.py ──→ permissions.py
            ├── context.py
            ├── recovery.py
+           ├── hooks.py
            └── config.py
            └── display.py
 ```

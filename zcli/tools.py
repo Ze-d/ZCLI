@@ -15,7 +15,7 @@ class ToolRegistry:
         self.memory = memory
         self.policy = PermissionPolicy(self.workspace, interactive)
         self.handlers: dict[str, Callable[..., str]] = {
-            "bash": self.bash,
+            "bash": self._run_bash,
             "read_file": self.read_file,
             "write_file": self.write_file,
             "edit_file": self.edit_file,
@@ -38,11 +38,22 @@ class ToolRegistry:
     def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
         return {"name": name, "description": description, "input_schema": {"type": "object", "properties": properties, "required": required}}
 
-    def execute(self, name: str, arguments: dict) -> str:
+    def permission_error(self, name: str, arguments: dict) -> str | None:
+        if name == "bash":
+            return self.policy.check_command(str(arguments.get("command", "")))
+        if name in {"read_file", "write_file", "edit_file"}:
+            return self.policy.check_path(str(arguments.get("path", "")))
+        return None
+
+    def execute(self, name: str, arguments: dict, *, permission_checked: bool = False) -> str:
         handler = self.handlers.get(name)
         if not handler:
             return f"Error: unknown tool {name}"
         try:
+            if not permission_checked:
+                error = self.permission_error(name, arguments)
+                if error:
+                    return f"Permission denied: {error}"
             return handler(**arguments)
         except Exception as exc:
             return f"Error: {type(exc).__name__}: {exc}"
@@ -53,13 +64,14 @@ class ToolRegistry:
             raise ValueError(error)
         return (self.workspace / path).resolve()
 
-    def bash(self, command: str) -> str:
-        error = self.policy.check_command(command)
-        if error:
-            return f"Permission denied: {error}"
+    def _run_bash(self, command: str) -> str:
         result = subprocess.run(command, shell=True, cwd=self.workspace, capture_output=True, text=True, timeout=120)
         output = (result.stdout + result.stderr).strip()
         return (output or "(no output)")[:50_000]
+
+    def bash(self, command: str) -> str:
+        """Safe direct-call facade; Agent execution uses the PreToolUse hook."""
+        return self.execute("bash", {"command": command})
 
     def read_file(self, path: str) -> str:
         return self._path(path).read_text(encoding="utf-8")[:50_000]
@@ -88,4 +100,3 @@ class ToolRegistry:
     def remember(self, name: str, description: str, body: str, memory_type: str = "user") -> str:
         memory = self.memory.remember(name, description, body, memory_type)
         return f"Remembered {memory.name} in {memory.filename}"
-

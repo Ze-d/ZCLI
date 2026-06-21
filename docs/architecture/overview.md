@@ -10,8 +10,8 @@
 │  Agent 层 (agent.py)                     │
 │  事件循环 · 工具编排 · 恢复 · 记忆抽取    │
 ├─────────────────────────────────────────┤
-│  Context 层 (context.py / recovery.py)   │
-│  分层压缩 · transcript · API 错误恢复     │
+│  Harness 层 (hooks.py / context.py)      │
+│  生命周期 Hook · 分层压缩 · API 错误恢复   │
 ├─────────────────────────────────────────┤
 │  存储 & 工具层                            │
 │  session.py  memory.py  tools.py         │
@@ -34,5 +34,7 @@
 - **Context compaction**: 大结果落盘 → 历史裁剪 → 旧工具结果压缩；仍超限才调用 LLM 摘要
 - **Memory extraction**: 每轮结束后 LLM 自动抽取偏好和项目事实持久化
 - **Permission gate**: 所有 bash 命令经过安全策略检查（硬拒绝 + 路径 jail）
+- **Lifecycle hooks**: 输入、工具前后和停止阶段通过可注册 Hook 扩展，权限由默认 PreToolUse Hook 执行
 
 分层策略、阈值和协议不变量见 [context-compaction.md](context-compaction.md)。
+Hook 事件和扩展约定见 [hooks.md](hooks.md)。

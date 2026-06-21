@@ -23,6 +23,10 @@
 - [ ] prompt-too-long 后执行 reactive compact 并重试
 - [ ] 429/529 自动退避，配置 fallback 时连续 529 可切换模型
 - [ ] `max_tokens` 首次截断后提高输出上限，仍截断则续写
+- [ ] UserPromptSubmit 可注入上下文
+- [ ] PreToolUse 可阻断工具，权限拒绝作为 tool_result 返回
+- [ ] PostToolUse 可检查或改写工具输出
+- [ ] Stop Hook 最多请求一次续跑，不形成循环
 - [ ] 记忆自动抽取
 - [ ] 错误不崩溃
 

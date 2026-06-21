@@ -11,6 +11,7 @@ cli.py: REPL 循环
   │ 否 → agent.run_turn(session, query)
   ▼
 agent.py: Pre-turn
+  ├─ hooks.trigger(UserPromptSubmit) → 阻断或附加上下文
   ├─ memory.render_relevant(query)  → 相关记忆片段
   ├─ session.messages.append(user_msg)
   └─ sessions.save(session)        → 原子写盘
@@ -23,12 +24,17 @@ agent.py: Tool loop (while True)
   ├─ client.messages.create()      → LLM 调用
   ├─ session.messages.append(assistant_msg)
   ├─ 有 tool_use?
-  │   ├─ tools.execute(name, input)
+  │   ├─ hooks.trigger(PreToolUse)
+  │   │   ├─ blocked → 权限/Hook 拒绝结果
+  │   │   └─ allow → tools.execute(name, input)
+  │   ├─ hooks.trigger(PostToolUse) → 检查/改写输出
   │   ├─ emit("[tool_name] output[:300]")
   │   ├─ session.messages.append(tool_results)
   │   └─ 继续循环
   └─ 无 tool_use?
-      └─ 跳出循环
+      ├─ hooks.trigger(Stop)
+      ├─ continuation → 注入一次 user 消息并继续
+      └─ 无 continuation → 跳出循环
   ▼
 agent.py: Post-turn
   └─ _extract_memories(turn_messages) → 容错异步抽取

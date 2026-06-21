@@ -7,6 +7,16 @@ from anthropic import Anthropic
 
 from .config import Settings
 from .context import ContextManager
+from .hooks import (
+    POST_TOOL_USE,
+    PRE_TOOL_USE,
+    STOP,
+    USER_PROMPT_SUBMIT,
+    HookContext,
+    HookManager,
+    large_output_hook,
+    permission_hook,
+)
 from .memory import MemoryStore
 from .recovery import RecoveryState, is_prompt_too_long_error, with_retry
 from .session import Session, SessionStore
@@ -31,7 +41,13 @@ def _blocks_to_dicts(blocks) -> list[dict]:
 
 
 class Agent:
-    def __init__(self, settings: Settings, client=None, interactive: bool = True):
+    def __init__(
+        self,
+        settings: Settings,
+        client=None,
+        interactive: bool = True,
+        hooks: HookManager | None = None,
+    ):
         self.settings = settings
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.client = client or Anthropic(base_url=settings.base_url)
@@ -39,6 +55,11 @@ class Agent:
         self.sessions = SessionStore(settings.data_dir)
         self.tools = ToolRegistry(settings.workspace, self.memory, interactive)
         self.context = ContextManager(settings.data_dir, settings.context_limit)
+        self.hooks = hooks or HookManager()
+        # Permission is registered first so an extension cannot bypass it by
+        # returning an "allow" result, matching Claude Code's safety invariant.
+        self.hooks.register(PRE_TOOL_USE, permission_hook, prepend=True)
+        self.hooks.register(POST_TOOL_USE, large_output_hook)
 
     def system_prompt(self, query: str) -> str:
         index = self.memory.index()
@@ -54,8 +75,24 @@ class Agent:
         ).strip()
 
     def run_turn(self, session: Session, query: str, emit: Callable[[str], None] = print) -> str:
+        submit = self.hooks.trigger(
+            USER_PROMPT_SUBMIT,
+            HookContext(
+                event=USER_PROMPT_SUBMIT,
+                agent=self,
+                session=session,
+                query=query,
+                emit=emit,
+            ),
+        )
+        if submit.blocked:
+            message = submit.reason or "User prompt blocked by hook"
+            emit(f"[HOOK] UserPromptSubmit blocked: {message}")
+            return message
+
         memory_context = self.memory.render_relevant(query)
-        user_content = f"{memory_context}\n\n{query}" if memory_context else query
+        user_parts = [part for part in (memory_context, submit.additional_context, query) if part]
+        user_content = "\n\n".join(user_parts)
         user_message = {"role": "user", "content": user_content}
         turn_messages = [user_message]
         session.messages.append(user_message)
@@ -64,6 +101,7 @@ class Agent:
         state = RecoveryState(self.settings.model)
         max_tokens = self.settings.max_tokens
         emitted_text: list[str] = []
+        stop_hook_active = False
         while True:
             try:
                 prepared, summary = self.context.prepare(
@@ -142,12 +180,62 @@ class Agent:
 
             calls = [block for block in blocks if block.get("type") == "tool_use"]
             if not calls:
+                if not stop_hook_active:
+                    stop = self.hooks.trigger(
+                        STOP,
+                        HookContext(
+                            event=STOP,
+                            agent=self,
+                            session=session,
+                            query=query,
+                            response_text=text,
+                            emit=emit,
+                        ),
+                    )
+                    if stop.continuation:
+                        continuation = {"role": "user", "content": stop.continuation}
+                        session.messages.append(continuation)
+                        turn_messages.append(continuation)
+                        stop_hook_active = True
+                        self.sessions.save(session)
+                        continue
                 self._extract_memories(turn_messages)
                 return "\n".join(emitted_text)
 
             results = []
             for call in calls:
-                output = self.tools.execute(call["name"], call.get("input", {}))
+                tool_input = call.get("input", {})
+                pre = self.hooks.trigger(
+                    PRE_TOOL_USE,
+                    HookContext(
+                        event=PRE_TOOL_USE,
+                        agent=self,
+                        session=session,
+                        query=query,
+                        tool_name=call["name"],
+                        tool_input=tool_input,
+                        emit=emit,
+                    ),
+                )
+                if pre.blocked:
+                    output = pre.reason or "Blocked by PreToolUse hook"
+                else:
+                    output = self.tools.execute(call["name"], tool_input, permission_checked=True)
+                    post = self.hooks.trigger(
+                        POST_TOOL_USE,
+                        HookContext(
+                            event=POST_TOOL_USE,
+                            agent=self,
+                            session=session,
+                            query=query,
+                            tool_name=call["name"],
+                            tool_input=tool_input,
+                            output=output,
+                            emit=emit,
+                        ),
+                    )
+                    if post.updated_output is not None:
+                        output = post.updated_output
                 emit(f"[{call['name']}] {output[:300]}")
                 compact_output = self.context.persist_large_output(call["id"], output)
                 results.append({"type": "tool_result", "tool_use_id": call["id"], "content": compact_output})
