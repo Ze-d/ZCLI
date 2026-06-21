@@ -107,6 +107,7 @@ class TeammateState:
     role: str
     status: str
     started_at: str
+    auto_claim: bool = False
     last_result: str = ""
 
 
@@ -141,7 +142,7 @@ class TeamManager:
             "input_schema": {"type": "object", "properties": properties, "required": required},
         }
 
-    def spawn(self, name: str, role: str, prompt: str) -> str:
+    def spawn(self, name: str, role: str, prompt: str, auto_claim: bool = False) -> str:
         name = validate_agent_name(name)
         if not prompt.strip():
             return "Error: teammate prompt cannot be empty"
@@ -150,7 +151,13 @@ class TeamManager:
             if current and current.status not in {"stopped", "completed", "failed"}:
                 return f"Teammate '{name}' already exists with status {current.status}"
             self.bus.read(name)
-            state = TeammateState(name, role.strip() or "generalist", "starting", _now())
+            state = TeammateState(
+                name,
+                role.strip() or "generalist",
+                "starting",
+                _now(),
+                auto_claim=auto_claim,
+            )
             stop_event = threading.Event()
             self.members[name] = state
             self._stops[name] = stop_event
@@ -234,7 +241,7 @@ class TeamManager:
                         self.bus.send(state.name, "lead", result, response_type, message.request_id)
                     state.status = "idle"
                     continue
-                task = self.tasks.claim_next(state.name)
+                task = self.tasks.claim_next(state.name) if state.auto_claim else None
                 if task:
                     idle_since = time.monotonic()
                     result = self._run_work(
@@ -315,6 +322,7 @@ class TeamManager:
                 return "No teammates."
             lines = [
                 f"{state.name}: role={state.role} status={state.status}"
+                + (" autoClaim=on" if state.auto_claim else "")
                 for state in sorted(self.members.values(), key=lambda item: item.name)
             ]
         unread = self.bus.count("lead")

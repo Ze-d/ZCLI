@@ -6,7 +6,7 @@ from pathlib import Path
 from . import __version__
 from .agent import Agent
 from .config import Settings
-from .display import show_banner
+from .display import console_emit, format_console_message, prompt_text, show_banner
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         while True:
             try:
-                query = input("zcli >> ").strip()
+                query = input(prompt_text(session.id)).strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
             if query in {"/exit", "/quit"}:
                 break
             if query == "/memory":
-                print(agent.memory.index() or "(no memories)")
+                print(format_console_message(agent.memory.index() or "(no memories)"))
                 continue
             if query == "/sessions":
                 for item in agent.sessions.list():
@@ -53,10 +53,10 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if query == "/todos":
                 if not session.todos:
-                    print("(no todos)")
+                    print(format_console_message("(no todos)"))
                 else:
                     for todo in session.todos:
-                        print(f"[{todo['status']}] {todo['content']}")
+                        print(format_console_message(f"[{todo['status']}] {todo['content']}"))
                 continue
             if query == "/tasks":
                 print(agent.tasks.render())
@@ -64,12 +64,12 @@ def main(argv: list[str] | None = None) -> int:
             if query == "/skills":
                 print(agent.skills.catalog())
                 for error in agent.skills.errors:
-                    print(f"[skill error] {error}")
+                    print(format_console_message(f"[skill error] {error}"))
                 continue
             if query == "/mcp":
                 print(agent.mcp.status())
                 for error in agent.mcp.errors:
-                    print(f"[mcp error] {error}")
+                    print(format_console_message(f"[mcp error] {error}"))
                 continue
             if query == "/team":
                 print(agent.team.render())
@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(agent.worktrees.render())
                 continue
             try:
-                agent.run_turn(session, query)
+                agent.run_turn(session, query, emit=console_emit)
             except Exception as exc:
                 print(f"Error: {type(exc).__name__}: {exc}")
     finally:

@@ -584,7 +584,7 @@ python -m pytest -q tests/test_mcp.py
 请检查 Team Inbox，并汇报 alice 的结论。
 ```
 
-**通过标准**：spawn 立即返回；`/team` 显示 working/idle/completed；完成消息通过 Lead Inbox 到达且只消费一次；Teammate 不能嵌套生成成员。
+**通过标准**：spawn 立即返回；`/team` 显示 working/idle/completed；完成消息通过 Lead Inbox 到达且只消费一次；默认 `autoClaim=false`，alice 完成检查后保持 idle，不会认领已有 Task；Teammate 不能嵌套生成成员。
 
 ### TEAM-02 消息、计划与关闭协议（P1，受控集成）
 
@@ -596,7 +596,9 @@ python -m pytest -q tests/test_teams.py
 
 ### TEAM-03 Task 自动认领（P0，受控集成）
 
-**通过标准**：空闲成员扫描 TaskStore，只认领依赖完成且无 owner 的 pending Task；owner 写成员名；绑定 Worktree 的 Task 在对应目录执行。以 `tests/test_teams.py` 和 `tests/test_subagents.py` 为权威证据。
+创建 worker 时必须显式传入 `autoClaim=true`。
+
+**通过标准**：启用自动认领的空闲成员扫描 TaskStore，只认领依赖完成且无 owner 的 pending Task；owner 写成员名；绑定 Worktree 的 Task 在对应目录执行。未启用的成员不认领无关 Task。以 `tests/test_teams.py` 和 `tests/test_subagents.py` 为权威证据。
 
 ### WT-01 创建并绑定 Task（P0，真实 Provider）
 

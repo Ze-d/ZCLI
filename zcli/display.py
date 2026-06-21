@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import re
 import shutil
 import sys
 from typing import Sequence
@@ -53,6 +54,33 @@ def yellow(text: str) -> str:          return _style(text, _YELLOW)
 def magenta(text: str) -> str:         return _style(text, _MAGENTA)
 def bright_cyan(text: str) -> str:     return _style(text, _BRIGHT_CYAN)
 def bold_white(text: str) -> str:      return _style(text, _BOLD, _WHITE)
+
+
+_LEADING_LABEL = re.compile(r"^(\[[^\]\r\n]+\])")
+_PARENTHESIZED_HINT = re.compile(r"^(\([^\)\r\n]+\))$")
+
+
+def prompt_text(session_id: str = "") -> str:
+    """Build the colored REPL prompt without leaking ANSI into user input."""
+    session = f" {magenta(f'({session_id})')}" if session_id else ""
+    return f"{_style('zcli', _BOLD, _BRIGHT_CYAN)}{session} {green('>>')} "
+
+
+def format_console_message(message: str) -> str:
+    """Color a leading ``[status]`` label or a standalone ``(hint)``."""
+    label = _LEADING_LABEL.match(message)
+    if label:
+        colored = _style(label.group(1), _BOLD, _MAGENTA)
+        return colored + message[label.end():]
+    hint = _PARENTHESIZED_HINT.match(message)
+    if hint:
+        return yellow(hint.group(1))
+    return message
+
+
+def console_emit(message: str) -> None:
+    """Print an agent event with terminal-only decoration."""
+    print(format_console_message(message))
 
 # ── Logo ───────────────────────────────────────────────────────────────
 

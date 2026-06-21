@@ -70,8 +70,24 @@ def test_idle_teammate_auto_claims_unblocked_task(tmp_path: Path):
     runner = FakeRunner()
     team = TeamManager(tmp_path, runner, tasks, poll_interval=0.01, idle_timeout=1)
     try:
-        team.spawn("bob", "worker", "stand by")
+        team.spawn("bob", "worker", "stand by", auto_claim=True)
         assert wait_until(lambda: tasks.load(task.id).owner == "bob")
         assert any(call[3] == task.id for call in runner.calls)
+    finally:
+        team.close()
+
+
+def test_one_off_teammate_does_not_claim_unrelated_task(tmp_path: Path):
+    tasks = TaskStore(tmp_path)
+    task = tasks.create("unrelated work")
+    team = TeamManager(tmp_path, FakeRunner(), tasks, poll_interval=0.01, idle_timeout=1)
+    try:
+        team.spawn("alice", "reviewer", "review seed.txt")
+        assert wait_until(lambda: team.members["alice"].status == "idle")
+        time.sleep(0.05)
+
+        assert team.members["alice"].status == "idle"
+        assert tasks.load(task.id).status == "pending"
+        assert tasks.load(task.id).owner is None
     finally:
         team.close()

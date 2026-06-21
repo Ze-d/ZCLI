@@ -29,7 +29,7 @@ Lead 工具：
 - `request_plan`、`review_plan`
 - `request_shutdown`
 
-Teammate 完成初始工作后进入 IDLE：先处理普通消息、计划和关闭协议；没有消息时扫描 Task Graph，原子认领第一个依赖已满足的 pending Task。默认空闲 60 秒后结束。Teammate 可以给 Lead 或其他成员发消息，但不能再生成 Teammate。
+Teammate 完成初始工作后进入 IDLE：先处理普通消息、计划和关闭协议。默认 `autoClaim=false`，一次性 reviewer 不会误领无关的遗留 Task；只有创建时显式设置 `autoClaim=true` 的 worker，才会在没有消息时扫描 Task Graph，原子认领第一个依赖已满足的 pending Task。默认空闲 60 秒后结束。Teammate 可以给 Lead 或其他成员发消息，但不能再生成 Teammate。
 
 Lead 每轮开始时自动消费自己的 Inbox，并以 `<team_inbox>` 注入当前用户消息；也可以显式调用 `check_inbox` 或使用 `/team`。
 

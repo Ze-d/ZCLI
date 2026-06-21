@@ -100,7 +100,17 @@ class ToolRegistry:
             builtins.append(self.subagents.tool_definition())
         if self.team:
             builtins.extend([
-                self._tool("spawn_teammate", "Spawn a named autonomous teammate in a background thread. Teammates cannot spawn teammates.", {"name": {"type": "string"}, "role": {"type": "string"}, "prompt": {"type": "string"}}, ["name", "role", "prompt"]),
+                self._tool(
+                    "spawn_teammate",
+                    "Spawn a named teammate in a background thread. Set autoClaim only for workers that may claim unrelated pending tasks. Teammates cannot spawn teammates.",
+                    {
+                        "name": {"type": "string"},
+                        "role": {"type": "string"},
+                        "prompt": {"type": "string"},
+                        "autoClaim": {"type": "boolean"},
+                    },
+                    ["name", "role", "prompt"],
+                ),
                 self._tool("list_teammates", "List teammate roles, status and unread lead messages.", {}, []),
                 self._tool("send_message", "Send a message from lead to a teammate.", {"to": {"type": "string"}, "content": {"type": "string"}}, ["to", "content"]),
                 self._tool("check_inbox", "Read and consume messages sent to the lead.", {}, []),
@@ -269,8 +279,8 @@ class ToolRegistry:
             return "Error: subagents are unavailable"
         return self.subagents.run(name, role, prompt, task_id, worktree)
 
-    def spawn_teammate(self, name: str, role: str, prompt: str) -> str:
-        return self.team.spawn(name, role, prompt) if self.team else "Error: team is unavailable"
+    def spawn_teammate(self, name: str, role: str, prompt: str, autoClaim: bool = False) -> str:
+        return self.team.spawn(name, role, prompt, autoClaim) if self.team else "Error: team is unavailable"
 
     def list_teammates(self) -> str:
         return self.team.render() if self.team else "Error: team is unavailable"
