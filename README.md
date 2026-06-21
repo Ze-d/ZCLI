@@ -4,7 +4,7 @@
 
 > 你的终端个人编程 Agent
 
-ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、生命周期 Hooks、TodoWrite、持久化 Task Graph、按需 Skill 加载、stdio/Streamable HTTP MCP 外部工具、长期记忆、会话持久化、分层上下文压缩和 API 错误恢复。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
+ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、生命周期 Hooks、TodoWrite、持久化 Task Graph、Subagent、后台 Team、Git Worktree、按需 Skill 加载、stdio/Streamable HTTP MCP、长期记忆、会话持久化、分层上下文压缩和 API 错误恢复。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
 
 上下文处理参考 `learn-claude-code` 的 s08、s11 和 s20：大工具结果先落盘，再裁剪旧消息和旧工具结果，仍超限时保存完整 transcript 并生成摘要。API 调用支持 429/529 指数退避、529 fallback model、`max_tokens` 扩容与续写，以及 prompt-too-long 后的 reactive compact。
 
@@ -108,6 +108,8 @@ REPL 内置命令：
 | `/tasks` | 查看持久化 Task Graph |
 | `/skills` | 查看工作区 Skill Catalog 和扫描错误 |
 | `/mcp` | 查看已配置/已连接的 MCP Server 和工具数量 |
+| `/team` | 查看 Teammate 状态并消费 Lead Inbox |
+| `/worktrees` | 查看 ZCLI 管理的 Git Worktree |
 
 ### MCP 外部工具
 
@@ -161,6 +163,7 @@ twine upload dist/*
 - [TodoWrite 与 Task Graph](docs/architecture/planning-and-tasks.md)
 - [Skill 两级加载](docs/architecture/skills.md)
 - [MCP 外部工具接入](docs/architecture/mcp.md)
+- [Subagent、Team 与 Worktree](docs/architecture/agents-teams-worktrees.md)
 - [模块职责](docs/architecture/module-map.md)
 - [环境变量](docs/development/env-vars.md)
 - [测试策略](docs/testing/test-strategy.md)

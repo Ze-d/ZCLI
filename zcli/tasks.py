@@ -28,6 +28,7 @@ class Task:
     blockedBy: list[str]
     created_at: str
     updated_at: str
+    worktree: str | None = None
 
 
 class TaskStore:
@@ -146,6 +147,33 @@ class TaskStore:
                 message += f"\nUnblocked: {', '.join(unblocked)}"
             return message
 
+    def bind_worktree(self, task_id: str, worktree: str | None) -> Task:
+        with self._lock:
+            task = self.load(task_id)
+            task.worktree = worktree
+            self.save(task)
+            return task
+
+    def unbind_worktree(self, worktree: str) -> list[str]:
+        changed = []
+        with self._lock:
+            for task in self.list():
+                if task.worktree == worktree:
+                    task.worktree = None
+                    self.save(task)
+                    changed.append(task.id)
+        return changed
+
+    def claim_next(self, owner: str) -> Task | None:
+        with self._lock:
+            for task in self.list():
+                if task.status == "pending" and not task.owner and self.can_start(task.id):
+                    task.owner = owner.strip() or "agent"
+                    task.status = "in_progress"
+                    self.save(task)
+                    return task
+        return None
+
     def get_json(self, task_id: str) -> str:
         return json.dumps(asdict(self.load(task_id)), ensure_ascii=False, indent=2)
 
@@ -157,6 +185,6 @@ class TaskStore:
             f"{task.id}: {task.subject} [{task.status}]"
             + (f" owner={task.owner}" if task.owner else "")
             + (f" blockedBy={','.join(task.blockedBy)}" if task.blockedBy else "")
+            + (f" worktree={task.worktree}" if task.worktree else "")
             for task in tasks
         )
-

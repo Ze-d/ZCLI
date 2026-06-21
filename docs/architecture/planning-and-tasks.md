@@ -54,6 +54,8 @@ pending ──claim_task──> in_progress ──complete_task──> completed
 
 每个任务独立保存为 JSON，并通过临时文件加 `os.replace()` 原子更新。重新启动 Agent 或切换 Session 不会丢失 Task Graph。
 
+Task 的可选 `worktree` 字段可以绑定 ZCLI 管理的 Git Worktree。空闲 Teammate 会原子认领依赖已满足的任务；Subagent 随后以成员名作为 owner，并在绑定的隔离目录中执行文件与 Shell 工具。
+
 ## System Prompt 注入
 
 每次模型调用前，ZCLI 会注入：
@@ -71,6 +73,5 @@ pending ──claim_task──> in_progress ──complete_task──> completed
 - Task Graph 沿用 s12 教学版，不做依赖环检测；
 - 进程内使用线程锁和原子写，但没有跨进程文件锁；
 - 暂无 release/unassign，任务不能从 `in_progress` 回退为 `pending`；
-- 当前只有单 Agent，`owner` 为后续团队能力预留；
+- `owner` 可记录 Lead、Subagent 或 Teammate；空闲成员支持自动认领；
 - 尚未扩展 `TaskCreated` / `TaskCompleted` Hook 事件。
-

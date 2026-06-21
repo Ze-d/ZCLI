@@ -15,7 +15,10 @@
 | 长期记忆 | `zcli/memory.py` | Markdown+YAML 文件存储、索引、检索 | `MemoryStore` |
 | Skill 注册 | `zcli/skills.py` | 扫描、Catalog、Frontmatter、按需加载 | `SkillRegistry`, `Skill` |
 | MCP 客户端 | `zcli/mcp.py` | 配置合并、stdio/HTTP transport、发现、调用、会话关闭 | `MCPManager`, `StdioMCPClient`, `StreamableHTTPMCPClient` |
-| 工具注册 | `zcli/tools.py` | 14 个内置工具与 MCP 动态工具的定义、执行分发 | `ToolRegistry` |
+| Subagent | `zcli/subagents.py` | 隔离工具循环、工具白名单、Task/Worktree 上下文 | `SubagentRunner` |
+| Team | `zcli/teams.py` | Teammate 线程、文件邮箱、计划/关闭协议、自动认领 | `TeamManager`, `MessageBus` |
+| Worktree | `zcli/worktrees.py` | Git 隔离目录、任务绑定、安全移除、事件日志 | `WorktreeManager` |
+| 工具注册 | `zcli/tools.py` | 27 个内置工具与 MCP 动态工具的定义、权限和分发 | `ToolRegistry` |
 | 权限策略 | `zcli/permissions.py` | 路径逃逸检测、危险命令拒绝、交互审批 | `PermissionPolicy` |
 | 终端展示 | `zcli/display.py` | ANSI 颜色、LOGO、启动 banner | `show_banner()` |
 
@@ -31,6 +34,8 @@ cli.py ──→ agent.py ──→ session.py
            ├── tasks.py
            ├── skills.py
            ├── mcp.py
+           ├── subagents.py ──→ teams.py
+           ├── worktrees.py ──→ tasks.py
            └── config.py
            └── display.py
 ```

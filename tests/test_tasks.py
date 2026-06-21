@@ -58,3 +58,14 @@ def test_invalid_task_input_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         store.create("bad dependency", blocked_by=["../escape"])
 
+
+def test_task_worktree_binding_persists_and_renders(tmp_path):
+    store = TaskStore(tmp_path)
+    task = store.create("isolated")
+
+    store.bind_worktree(task.id, "feature")
+
+    assert TaskStore(tmp_path).load(task.id).worktree == "feature"
+    assert "worktree=feature" in store.render()
+    assert store.unbind_worktree("feature") == [task.id]
+    assert store.load(task.id).worktree is None

@@ -39,6 +39,11 @@
 - [ ] HTTP 关闭发送 DELETE；URL、Header、超时与环境变量配置校验正确
 - [ ] MCP 名称规范化无冲突，连接与 destructive 工具均经过审批
 - [ ] `/mcp` 展示配置/连接状态，退出时子进程被回收
+- [ ] Subagent 不继承 Lead 历史，只获得白名单工具且不能递归生成 Agent
+- [ ] Teammate 后台运行，Mailbox 消费一次，计划/关闭协议按 request ID 路由
+- [ ] 空闲 Teammate 只认领依赖已满足的 pending Task，owner 为成员名
+- [ ] Worktree 名称安全，Task 绑定正确，脏目录默认拒绝移除
+- [ ] `discard_changes=true` 经审批后清理 Worktree、分支、注册表和 Task 绑定
 - [ ] Session 恢复时单次扫描，自动补齐缺失结果并移除孤立结果
 - [ ] 记忆自动抽取
 - [ ] 错误不崩溃

@@ -38,6 +38,8 @@
 - **Two-level planning**: Session Todo 管当前步骤；持久 Task Graph 管依赖、认领和跨 Session 进度
 - **Two-level skill loading**: System Prompt 只放 Catalog，完整 SKILL.md 由 `load_skill` 按需加载
 - **Late-bound MCP tools**: stdio 或 Streamable HTTP 连接后发现工具，以命名空间合入下一轮动态工具池
+- **Delegation layers**: 一次性 Subagent、后台 Teammate、Task 自动认领与文件邮箱
+- **Git isolation**: Task 可绑定独立 Worktree，删除前检查工作状态
 
 分层策略、阈值和协议不变量见 [context-compaction.md](context-compaction.md)。
 Hook 事件和扩展约定见 [hooks.md](hooks.md)。
@@ -45,3 +47,4 @@ Hook 事件和扩展约定见 [hooks.md](hooks.md)。
 Skill 加载模型见 [skills.md](skills.md)。
 
 MCP 的多 transport 连接、动态工具池与权限模型见 [mcp.md](mcp.md)。
+Agent 委派与 Git 隔离见 [agents-teams-worktrees.md](agents-teams-worktrees.md)。

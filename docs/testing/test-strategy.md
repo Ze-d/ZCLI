@@ -24,6 +24,9 @@
 | TodoWrite | — | 输入校验、Session 持久化、system prompt 注入、三轮提醒 |
 | `skills.py` | — | Frontmatter、Catalog 隔离、按需加载、热重扫、诊断和预算 |
 | `mcp.py` | — | 配置优先级、名称规范化、真实 stdio/HTTP 握手、JSON/SSE、动态工具池、权限和关闭 |
+| `subagents.py` | — | 独立历史、工具白名单、Task owner 与工作区隔离 |
+| `teams.py` | — | 文件邮箱、后台成员、消息/计划/关闭协议、自动认领 |
+| `worktrees.py` | — | 真实 Git Worktree、绑定、脏状态拒绝、强制移除 |
 | `memory.py` | 2 | remember+retrieve, save_extracted JSON |
 | `session.py` | — | round-trip、路径逃逸、tool_use/tool_result 历史修复与持久化 |
 | `tools.py` | 2 | 工作区隔离, remember 工具 |

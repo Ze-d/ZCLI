@@ -7,7 +7,7 @@
   │
   ▼
 cli.py: REPL 循环
-  │ 内置命令? → /exit /memory /sessions /todos /tasks /skills /mcp → 直接处理
+  │ 内置命令? → /exit /memory /sessions /todos /tasks /skills /mcp /team /worktrees → 直接处理
   │ 否 → agent.run_turn(session, query)
   ▼
 agent.py: Pre-turn
@@ -15,6 +15,7 @@ agent.py: Pre-turn
   ├─ memory.render_relevant(query)  → 相关记忆片段
   ├─ skills.catalog()               → 名称+描述进入 System Prompt
   ├─ mcp.status()                    → 配置与连接状态进入 System Prompt
+  ├─ team.render()/worktrees.render() → 协作与隔离状态进入 System Prompt
   ├─ session.messages.append(user_msg)
   └─ sessions.save(session)        → 原子写盘
   ▼
@@ -32,6 +33,9 @@ agent.py: Tool loop (while True)
   │   │   └─ allow → tools.execute(name, input)
   │   │       └─ load_skill → 完整 SKILL.md 作为 tool_result
   │   │       └─ connect_mcp → 握手、发现并注册动态 MCP 工具
+  │   │       ├─ run_subagent → 独立 messages + 受限工具循环
+  │   │       ├─ spawn_teammate → 后台线程 + 文件邮箱
+  │   │       └─ create_worktree → Git 分支/目录 + 可选 Task 绑定
   │   ├─ hooks.trigger(PostToolUse) → 检查/改写输出
   │   ├─ emit("[tool_name] output[:300]")
   │   ├─ session.messages.append(tool_results)

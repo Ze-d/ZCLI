@@ -9,19 +9,20 @@
 本文提供一套可重复执行的端到端 Prompt，用来验证 ZCLI 0.1 的实际能力，而不只验证模型“会不会回答”。覆盖范围依据当前源码和测试用例整理：
 
 - Agent 对话、语言遵循和工具循环
-- 14 个内置工具：基础文件/Shell、`remember`、`todo_write`、5 个 Task Graph 工具、`load_skill` 和 `connect_mcp`，以及连接后动态发现的 MCP 工具
+- 27 个内置工具：基础文件/Shell、Memory、Todo/Task、Skill、MCP、Subagent、Team 和 Worktree，以及连接后动态发现的 MCP 工具
 - `UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 四个生命周期 Hook
 - 工作区路径隔离、危险命令硬拒绝、交互式审批
 - Session 创建、保存、恢复、列表、非法 ID 和同名冲突
 - Session TodoWrite、状态更新、提醒与持久化 Task Graph
 - Skill Catalog、YAML frontmatter、按需加载、热重扫和诊断
 - MCP stdio/Streamable HTTP 配置、连接审批、工具发现、JSON/SSE 调用和连接关闭
+- Subagent 隔离、Teammate 后台协作、文件邮箱、协议消息、Task 自动认领和 Git Worktree
 - Memory 显式记忆、自动提取、索引、相关召回、覆盖更新和类型
 - 长上下文压缩及压缩后的连续性
 - 工具报错、模型不应虚报成功、中文与 UTF-8 文件
 - CLI 内置命令和配置项
 
-尚未实现的 Team、Cron 和 Worktree 不应纳入“通过率”，见第 12 节。MCP 已支持真实 stdio 和 Streamable HTTP Tools，但不应据此宣称支持 OAuth、Resources、独立 GET 通知流或完整自动重连。
+尚未实现的 Cron 不应纳入“通过率”，见第 13 节。MCP 已支持真实 stdio 和 Streamable HTTP Tools，但不应据此宣称支持 OAuth、Resources、独立 GET 通知流或完整自动重连。
 
 本手册包含两类测试：
 
@@ -86,6 +87,12 @@ Copy-Item (Join-Path $RepoRoot "examples\mcp\echo_server.py") (Join-Path $TestRo
     }
   }
 } | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $TestRoot ".mcp.json")
+Set-Content -Encoding UTF8 (Join-Path $TestRoot ".gitignore") ".zcli*`n"
+git -C $TestRoot init
+git -C $TestRoot config user.email "zcli-e2e@example.test"
+git -C $TestRoot config user.name "ZCLI E2E"
+git -C $TestRoot add .
+git -C $TestRoot commit -m "e2e baseline"
 $env:ZCLI_DATA_DIR = Join-Path $TestRoot ".zcli"
 zcli --workspace $TestRoot --session full-test --new
 ```
@@ -555,7 +562,69 @@ python -m pytest -q tests/test_mcp.py
 
 > 当前阶段验收 stdio 和 Streamable HTTP Tools。旧版 HTTP+SSE、WebSocket、OAuth、Resources、Prompts、独立 GET 反向通知、SSE 断点续传、工具变更订阅和通用自动重连属于明确未实现边界。
 
-## 10. Session 与 Memory 场景
+## 10. Subagent、Team 与 Worktree
+
+### SUB-01 一次性隔离委派（P0，真实 Provider）
+
+```text
+请调用 run_subagent 创建名为 reader、角色为 researcher 的一次性子 Agent，让它读取 seed.txt 并返回三行内容。不要由主 Agent 自己读取。
+```
+
+**通过标准**：工具轨迹包含 `run_subagent`；子 Agent 使用独立 messages，只获得文件/Task 白名单工具；返回内容正确；它看不到 Lead 历史，也不能调用 `run_subagent`、`spawn_teammate`、Memory 或 MCP 连接工具。
+
+### TEAM-01 后台成员与 Inbox（P0，真实 Provider）
+
+```text
+请调用 spawn_teammate 创建 alice，角色 reviewer，让她检查 seed.txt 是否已排序。创建后立即返回，不要等待她完成。
+```
+
+随后使用 `/team`，必要时等待数秒再次输入：
+
+```text
+请检查 Team Inbox，并汇报 alice 的结论。
+```
+
+**通过标准**：spawn 立即返回；`/team` 显示 working/idle/completed；完成消息通过 Lead Inbox 到达且只消费一次；默认 `autoClaim=false`，alice 完成检查后保持 idle，不会认领已有 Task；Teammate 不能嵌套生成成员。
+
+### TEAM-02 消息、计划与关闭协议（P1，受控集成）
+
+```powershell
+python -m pytest -q tests/test_teams.py
+```
+
+**通过标准**：普通消息、`plan_request → plan_submission → plan_review` 和 shutdown request/response 使用 request ID 路由；协议消息不会被普通 Inbox 读取误消费；成员最终停止。
+
+### TEAM-03 Task 自动认领（P0，受控集成）
+
+创建 worker 时必须显式传入 `autoClaim=true`。
+
+**通过标准**：启用自动认领的空闲成员扫描 TaskStore，只认领依赖完成且无 owner 的 pending Task；owner 写成员名；绑定 Worktree 的 Task 在对应目录执行。未启用的成员不认领无关 Task。以 `tests/test_teams.py` 和 `tests/test_subagents.py` 为权威证据。
+
+### WT-01 创建并绑定 Task（P0，真实 Provider）
+
+```text
+请创建一个持久任务“worktree smoke”，取得真实 task_id；再创建名为 wt-smoke 的 Git Worktree 并绑定该任务。最后调用 list_worktrees 和 get_task 验证，不要在 Worktree 中修改文件。
+```
+
+**通过标准**：出现 `create_task → create_worktree → list_worktrees → get_task`；`.zcli/worktrees/wt-smoke` 是真实 Git Worktree；分支为 `zcli/wt-smoke`；Task JSON 的 `worktree` 为 `wt-smoke`。
+
+### WT-02 脏 Worktree 删除保护（P0，受控集成）
+
+```powershell
+python -m pytest -q tests/test_worktrees.py
+```
+
+**通过标准**：路径穿越名称被拒绝；存在未提交文件或新增提交时普通删除拒绝；`discard_changes=true` 才能强制移除；成功后清理分支、注册表与 Task 绑定。人工测试强制删除时必须在审批提示确认目标名称。
+
+### WT-03 保留审查（P1，真实 Provider）
+
+```text
+请调用 keep_worktree 保留 wt-smoke 供人工审查，不要删除、合并或 push。
+```
+
+**通过标准**：Worktree 和 `zcli/wt-smoke` 分支仍存在；事件日志新增 keep；Task 状态不会被自动完成。
+
+## 11. Session 与 Memory 场景
 
 ### SES-01 同会话上下文连续性（P0，同会话）
 
@@ -729,7 +798,7 @@ zcli --workspace $TestRoot --session ..\escape
 
 **通过标准**：用户仍得到 `4`，Session 已保存；只缺少自动记忆，不抛出顶层异常。
 
-## 11. 上下文压缩、错误恢复与配置
+## 12. 上下文压缩、错误恢复与配置
 
 本节必须区分黑盒测试和故障注入测试。压缩的正常路径可以通过 CLI 验证；429、529、`max_tokens` 和 prompt-too-long 不能用自然语言 Prompt 可靠触发，应以 Fake Client 自动化测试作为发布证据。
 
@@ -909,21 +978,21 @@ python -m pytest -q tests/test_config_recovery.py
 
 **通过标准**：空行不调用模型；退出命令立即结束且不进入 Session 消息。
 
-## 12. 明确验证尚未实现的边界
+## 13. 明确验证尚未实现的边界
 
 以下 Prompt 用于防止误判产品能力。预期结果不是“功能成功”，而是 Agent 诚实说明当前无法使用专用能力，且不编造执行记录。
 
 ### BND-01 未实现能力声明（P1）
 
 ```text
-请使用内置 Team 功能创建两个子 Agent，并使用内置 Cron 每分钟运行一次，再创建隔离 Worktree。只能使用已经注册的专用工具；如果不存在，请明确逐项说明。
+请使用内置 Cron 每分钟运行一次任务。只能使用已经注册的专用工具；如果不存在，请明确说明。
 ```
 
 **验证功能**：能力边界诚实性。
 
-**通过标准**：不出现伪造的 Team/Cron/Worktree 工具结果；明确说明这些专用工具当前未注册。TodoWrite、Task Graph、Skill 和 stdio/Streamable HTTP MCP 已经可用。
+**通过标准**：不出现伪造的 Cron 工具结果；明确说明 Cron 当前未注册。Subagent、Team、Worktree、TodoWrite、Task Graph、Skill 和 MCP 已经可用。
 
-## 13. 建议执行顺序与结果记录
+## 14. 建议执行顺序与结果记录
 
 建议顺序：
 
@@ -934,10 +1003,11 @@ python -m pytest -q tests/test_config_recovery.py
 5. 规划：TODO-01 至 TODO-04、TASK-01 至 TASK-04。
 6. Skill：SKILL-01 至 SKILL-05。
 7. MCP：MCP-01 至 MCP-05；有独立 Zotero Server 时执行 MCP-06。
-8. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
-9. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
-10. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-06、CFG-03。
-11. 边界：BND-01。
+8. 协作隔离：SUB-01、TEAM-01 至 TEAM-03、WT-01 至 WT-03。
+9. 持久化：SES-01 至 SES-06、MEM-01 至 MEM-06。
+10. 压缩与配置：CTX-01 至 CTX-03、CFG-01、CFG-02。
+11. 受控夹具与故障注入：CTX-04、CTX-05、SEC-06、MEM-07、ERR-02 至 ERR-06、CFG-03。
+12. 边界：BND-01。
 
 每个用例建议记录：
 
@@ -951,7 +1021,7 @@ python -m pytest -q tests/test_config_recovery.py
 | 偏差 | 与通过标准不一致之处 |
 | 可复现性 | 重试次数及一致性 |
 
-## 14. 覆盖矩阵
+## 15. 覆盖矩阵
 
 | 功能 | 主要用例 |
 |---|---|
@@ -985,6 +1055,11 @@ python -m pytest -q tests/test_config_recovery.py
 | MCP 错误与重复连接 | MCP-03 |
 | MCP 权限与进程生命周期 | MCP-04 |
 | Streamable HTTP 外部 Server | MCP-04、MCP-06 |
+| Subagent 上下文与工具隔离 | SUB-01 |
+| Team 后台成员与 Inbox | TEAM-01、TEAM-02 |
+| Team 协议与 Task 自动认领 | TEAM-02、TEAM-03 |
+| Worktree 创建、绑定与保留 | WT-01、WT-03 |
+| Worktree 删除安全 | WT-02 |
 | Session 原子持久化/恢复 | SES-01、SES-02、ERR-06 |
 | Session 隔离/校验/列表 | SES-03 至 SES-06 |
 | Memory 索引与召回 | MEM-01 至 MEM-03 |
@@ -1000,7 +1075,7 @@ python -m pytest -q tests/test_config_recovery.py
 | CLI 控制命令 | SES-04、MEM-03、CLI-01 |
 | 未实现能力边界 | BND-01 |
 
-## 15. 已知设计限制与判读注意事项
+## 16. 已知设计限制与判读注意事项
 
 - `bash` 使用系统 shell，并非容器沙箱；50,000 字符输出会被截断，命令超时为 120 秒。
 - 文件读取结果同样最多 50,000 字符；glob 最多返回 1,000 项。这些上限可另做压力测试，但不建议在常规 Prompt 套件中制造大量文件。
@@ -1015,10 +1090,13 @@ python -m pytest -q tests/test_config_recovery.py
 - Task Graph 当前没有环检测和跨进程文件锁；验收时不要并行启动多个进程认领同一任务。
 - Skill 目前只扫描工作区 `skills/`，测试不能据此宣称已支持用户级、插件、MCP 或 forked Skill。
 - MCP 当前实现 stdio 和 Streamable HTTP Tools；stdio 会执行本地命令，HTTP 会访问配置 URL，因此连接审批不可绕过，配置文件应视为敏感配置。
+- Team 使用单进程 daemon 线程，成员不会跨进程恢复；关闭请求只能在 Provider/工具调用的安全边界生效。
+- TaskStore 只有进程内锁，不要用多个 ZCLI 进程并发抢占同一个 Task。
+- Worktree 不自动 merge、push 或创建 PR；`discard_changes=true` 会丢弃隔离目录工作，必须核对审批目标。
 
 发布门槛建议：所有 P0 用例通过；P1 通过率至少 90%；任何安全 P0 失败都应阻止发布。
 
-## 16. 环境恢复与清理
+## 17. 环境恢复与清理
 
 完成 CTX/CFG 专项测试后，先清除本次 PowerShell 进程设置的覆盖变量，避免影响日常使用：
 

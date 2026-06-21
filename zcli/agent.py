@@ -22,8 +22,11 @@ from .mcp import MCPManager
 from .recovery import RecoveryState, is_prompt_too_long_error, with_retry
 from .session import Session, SessionStore
 from .skills import SkillRegistry
+from .subagents import SubagentRunner
 from .tasks import TaskStore
+from .teams import TeamManager
 from .tools import ToolRegistry
+from .worktrees import WorktreeManager
 
 
 def _blocks_to_dicts(blocks) -> list[dict]:
@@ -59,6 +62,9 @@ class Agent:
         self.tasks = TaskStore(settings.data_dir)
         self.skills = SkillRegistry(settings.workspace / "skills")
         self.mcp = MCPManager(settings.workspace)
+        self.worktrees = WorktreeManager(settings.workspace, settings.data_dir, self.tasks)
+        self.subagents = SubagentRunner(settings, self.client, self.memory, self.tasks, self.worktrees)
+        self.team = TeamManager(settings.data_dir, self.subagents, self.tasks)
         self.tools = ToolRegistry(
             settings.workspace,
             self.memory,
@@ -66,6 +72,9 @@ class Agent:
             self.tasks,
             self.skills,
             self.mcp,
+            self.subagents,
+            self.team,
+            self.worktrees,
         )
         self.context = ContextManager(settings.data_dir, settings.context_limit)
         self.hooks = hooks or HookManager()
@@ -92,17 +101,23 @@ class Agent:
             "When a skill is relevant, call load_skill(name) before following its instructions."
         )
         mcp_section = "\n\n" + self.mcp.status()
+        team_section = f"\n\nTeam status:\n{self.team.render()}"
+        worktree_section = f"\n\nWorktrees:\n{self.worktrees.render()}"
         return (
             "You are ZCLI, a personal coding agent. Respond in the user's preferred language. "
             "Use tools to inspect and modify the workspace when needed. Never claim a tool action succeeded "
             "without its result. When the user explicitly asks you to remember a stable preference or fact, "
             "call the remember tool. For multi-step work, use todo_write and keep statuses current. Use the "
-            "durable task graph for work that must survive sessions or has dependencies. Keep answers concise.\n\n"
+            "durable task graph for work that must survive sessions or has dependencies. Delegate bounded, "
+            "independent work to a subagent; use teammates for asynchronous collaboration; use task-bound "
+            "worktrees when parallel edits need filesystem isolation. Keep answers concise.\n\n"
             f"Workspace: {self.settings.workspace}"
-            f"{memory_section}{todo_section}{task_section}{skill_section}{mcp_section}\n\n{relevant}"
+            f"{memory_section}{todo_section}{task_section}{skill_section}{mcp_section}"
+            f"{team_section}{worktree_section}\n\n{relevant}"
         ).strip()
 
     def close(self) -> None:
+        self.team.close()
         self.mcp.close()
 
     def run_turn(self, session: Session, query: str, emit: Callable[[str], None] = print) -> str:
@@ -122,7 +137,9 @@ class Agent:
             return message
 
         memory_context = self.memory.render_relevant(query)
-        user_parts = [part for part in (memory_context, submit.additional_context, query) if part]
+        inbox = self.team.check_inbox()
+        team_context = "" if inbox == "Inbox empty." else f"<team_inbox>\n{inbox}\n</team_inbox>"
+        user_parts = [part for part in (memory_context, team_context, submit.additional_context, query) if part]
         user_content = "\n\n".join(user_parts)
         user_message = {"role": "user", "content": user_content}
         turn_messages = [user_message]

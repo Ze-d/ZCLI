@@ -26,6 +26,8 @@ zcli [--workspace PATH] [--session NAME] [--new] [--list-sessions]
 | `/tasks` | 显示持久 Task Graph |
 | `/skills` | 显示 Skill Catalog 和扫描诊断 |
 | `/mcp` | 显示 MCP 配置、连接状态和工具数量 |
+| `/team` | 显示 Teammate 状态并消费 Lead Inbox |
+| `/worktrees` | 显示受管 Git Worktree |
 
 ## 配置契约
 
@@ -64,7 +66,7 @@ MCP 配置来自 `~/.zcli/mcp.json`、`<workspace>/.mcp.json` 和 `<workspace>/.
 
 ### `ToolRegistry.execute(name, arguments) -> str`
 
-- 14 个内置工具：`bash`, `read_file`, `write_file`, `edit_file`, `glob`, `remember`, `todo_write`, `create_task`, `list_tasks`, `get_task`, `claim_task`, `complete_task`, `load_skill`, `connect_mcp`
+- 27 个内置工具：14 个基础/规划/Skill/MCP 工具，`run_subagent`，7 个 Team 工具，以及 5 个 Worktree 工具
 - 连接后动态增加 `mcp__<server>__<tool>` 工具；定义来自远端 `tools/list`
 - 所有工具返回字符串（成功消息或错误信息）
 - bash/文件工具、MCP 连接和 destructive MCP 工具受 `PermissionPolicy` 约束
