@@ -73,13 +73,13 @@ def test_compact_triggers_after_8_messages(tmp_path: Path):
     session.messages.append({"role": "assistant", "content": "A3"})
     agent._compact_if_needed(session)
     assert session.summary != ""  # 压缩已触发，summary 非空
-    assert "<session_summary>" in session.messages[0]["content"]
+    assert "[Compacted]" in session.messages[0]["content"]
     # Q0 被摘要替换，原来的第一条 user 消息不再是 "Q0"
     assert session.messages[0]["content"] != "Q0"
 
 
-def test_compact_split_finds_first_assistant(tmp_path: Path):
-    """8 条消息时 split 应从索引 1 (第一个 assistant) 切分。"""
+def test_full_compact_replaces_history_with_summary(tmp_path: Path):
+    """与 s08 一致：完整压缩后只保留一条可继续工作的摘要。"""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     settings = Settings(workspace, tmp_path / "data", "fake-model", None, context_limit=1)
@@ -100,8 +100,61 @@ def test_compact_split_finds_first_assistant(tmp_path: Path):
 
     agent._compact_if_needed(session)
     assert session.summary != ""
-    # recent 应保留索引 1 开始的 7 条（A0..A3），加 1 条 summary = 8
-    assert len(session.messages) == 8  # 1 summary + 7 recent
+    assert len(session.messages) == 1
+    assert session.messages[0]["content"].startswith("[Compacted]")
+
+
+class FakeMaxTokensMessages:
+    def __init__(self):
+        self.max_tokens = []
+
+    def create(self, **kwargs):
+        if "tools" not in kwargs:
+            return SimpleNamespace(content=[Block(type="text", text="[]")], stop_reason="end_turn")
+        self.max_tokens.append(kwargs["max_tokens"])
+        if len(self.max_tokens) == 1:
+            return SimpleNamespace(content=[Block(type="text", text="截断内容")], stop_reason="max_tokens")
+        return SimpleNamespace(content=[Block(type="text", text="完整内容")], stop_reason="end_turn")
+
+
+def test_max_tokens_escalates_without_saving_first_truncated_response(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings = Settings(workspace, tmp_path / "data", "fake-model", None, max_tokens=100, escalated_max_tokens=200)
+    messages = FakeMaxTokensMessages()
+    agent = Agent(settings, client=SimpleNamespace(messages=messages), interactive=False)
+    session = agent.sessions.create("max-tokens")
+
+    output = agent.run_turn(session, "生成内容", emit=lambda _: None)
+
+    assert output == "完整内容"
+    assert messages.max_tokens == [100, 200]
+    assert "截断内容" not in str(session.messages)
+
+
+class FakePromptTooLongMessages:
+    def __init__(self):
+        self.main_calls = 0
+
+    def create(self, **kwargs):
+        if "tools" not in kwargs:
+            return SimpleNamespace(content=[Block(type="text", text="恢复摘要")], stop_reason="end_turn")
+        self.main_calls += 1
+        if self.main_calls == 1:
+            raise RuntimeError("context_length_exceeded: prompt is too long")
+        return SimpleNamespace(content=[Block(type="text", text="恢复成功")], stop_reason="end_turn")
+
+
+def test_prompt_too_long_reactive_compacts_once_and_retries(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    messages = FakePromptTooLongMessages()
+    agent = Agent(Settings(workspace, tmp_path / "data", "fake-model", None), client=SimpleNamespace(messages=messages), interactive=False)
+    session = agent.sessions.create("reactive")
+
+    assert agent.run_turn(session, "继续", emit=lambda _: None) == "恢复成功"
+    assert messages.main_calls == 2
+    assert list((tmp_path / "data" / "transcripts").glob("reactive_*.jsonl"))
 
 
 def test_compact_no_trigger_below_threshold(tmp_path: Path):

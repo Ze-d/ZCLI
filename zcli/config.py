@@ -15,6 +15,11 @@ _ZCLI_KEYS = frozenset({
     "ZCLI_WORKSPACE",
     "ZCLI_DATA_DIR",
     "ZCLI_CONTEXT_LIMIT",
+    "FALLBACK_MODEL_ID",
+    "ZCLI_MAX_TOKENS",
+    "ZCLI_ESCALATED_MAX_TOKENS",
+    "ZCLI_MAX_RETRIES",
+    "ZCLI_MAX_RECOVERY_RETRIES",
 })
 
 # Default template for ~/.zcli/config.env
@@ -35,6 +40,13 @@ _GLOBAL_CONFIG_TEMPLATE = """\
 
 # Context limit in tokens
 # ZCLI_CONTEXT_LIMIT=50000
+
+# Recovery
+# FALLBACK_MODEL_ID=
+# ZCLI_MAX_TOKENS=8000
+# ZCLI_ESCALATED_MAX_TOKENS=16000
+# ZCLI_MAX_RETRIES=3
+# ZCLI_MAX_RECOVERY_RETRIES=2
 """
 
 
@@ -114,6 +126,10 @@ class Settings:
     base_url: str | None
     context_limit: int = 50_000
     max_tokens: int = 8_000
+    escalated_max_tokens: int = 16_000
+    fallback_model: str | None = None
+    max_retries: int = 3
+    max_recovery_retries: int = 2
 
     @classmethod
     def load(cls, workspace: str | Path | None = None) -> "Settings":
@@ -128,4 +144,9 @@ class Settings:
             model=cfg.get("MODEL_ID", "claude-sonnet-4-6"),
             base_url=cfg.get("ANTHROPIC_BASE_URL"),
             context_limit=int(cfg.get("ZCLI_CONTEXT_LIMIT", "50000")),
+            max_tokens=int(cfg.get("ZCLI_MAX_TOKENS", "8000")),
+            escalated_max_tokens=int(cfg.get("ZCLI_ESCALATED_MAX_TOKENS", "16000")),
+            fallback_model=cfg.get("FALLBACK_MODEL_ID"),
+            max_retries=int(cfg.get("ZCLI_MAX_RETRIES", "3")),
+            max_recovery_retries=int(cfg.get("ZCLI_MAX_RECOVERY_RETRIES", "2")),
         )

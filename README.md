@@ -4,7 +4,9 @@
 
 > 你的终端个人编程 Agent
 
-ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、长期记忆和会话持久化。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
+ZCLI 是一个轻量级 CLI 编程 Agent，支持多轮对话、文件操作、Bash 执行、长期记忆、会话持久化、分层上下文压缩和 API 错误恢复。兼容 Anthropic / DeepSeek / MiniMax / GLM / Kimi 等厂商。
+
+上下文处理参考 `learn-claude-code` 的 s08、s11 和 s20：大工具结果先落盘，再裁剪旧消息和旧工具结果，仍超限时保存完整 transcript 并生成摘要。API 调用支持 429/529 指数退避、529 fallback model、`max_tokens` 扩容与续写，以及 prompt-too-long 后的 reactive compact。
 
 ## 快速安装
 
@@ -71,6 +73,12 @@ MODEL_ID=claude-sonnet-4-6
 | `ANTHROPIC_BASE_URL` | 否 | `https://api.anthropic.com` | API 端点 |
 | `ZCLI_WORKSPACE` | 否 | 当前目录 | 工作区 |
 | `ZCLI_DATA_DIR` | 否 | `<workspace>/.zcli` | 数据目录 |
+| `ZCLI_CONTEXT_LIMIT` | 否 | `50000` | 触发完整摘要压缩的估算 token 阈值 |
+| `FALLBACK_MODEL_ID` | 否 | — | 连续 529 后切换的备用模型 |
+| `ZCLI_MAX_TOKENS` | 否 | `8000` | 常规模型输出上限 |
+| `ZCLI_ESCALATED_MAX_TOKENS` | 否 | `16000` | 首次输出截断后的重试上限 |
+| `ZCLI_MAX_RETRIES` | 否 | `3` | 429/529 最大调用次数 |
+| `ZCLI_MAX_RECOVERY_RETRIES` | 否 | `2` | 扩容后仍截断时的续写次数 |
 
 ## 使用
 
