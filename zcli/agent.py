@@ -84,9 +84,11 @@ class Agent:
         self.hooks.register(POST_TOOL_USE, large_output_hook)
 
     def system_prompt(self, query: str, session: Session | None = None) -> str:
+        # 注入当前的长期记忆
         index = self.memory.index()
         relevant = self.memory.render_relevant(query)
         memory_section = "\n\nLong-term memory catalog:\n" + index if index else ""
+        # todo_section 显示当前会话的待办事项
         todo_section = ""
         if session and session.todos:
             todo_section = "\n\nCurrent session todos:\n" + "\n".join(
@@ -157,6 +159,7 @@ class Agent:
                 turn_messages.append(reminder)
                 session.rounds_since_todo = 0
                 self.sessions.save(session)
+            # 每次循环都尝试准备消息和摘要，如果消息过长则进行压缩 
             try:
                 prepared, summary = self.context.prepare(
                     session.messages,
@@ -297,8 +300,11 @@ class Agent:
                         output = post.updated_output
                     if call["name"] != "todo_write":
                         session.rounds_since_todo += 1
+                # 打印前300个字符的输出，避免过长
                 emit(f"[{call['name']}] {output[:300]}")
+                # 如果工具返回结果太大，使用 context.persist_large_output 存储到文件，并返回文件路径
                 compact_output = self.context.persist_large_output(call["id"], output)
+                # 将工具调用结果写入会话消息中，方便后续恢复和分析
                 results.append({"type": "tool_result", "tool_use_id": call["id"], "content": compact_output})
             result_message = {"role": "user", "content": results}
             session.messages.append(result_message)
@@ -343,6 +349,7 @@ class Agent:
             if block.get("type") == "text"
         ).strip()
 
+    # 从对话消息中提取记忆，调用模型进行筛选和结构化，并保存到记忆库
     def _extract_memories(self, turn_messages: list[dict]) -> None:
         dialogue = json.dumps(turn_messages, ensure_ascii=False)[:12_000]
         prompt = (

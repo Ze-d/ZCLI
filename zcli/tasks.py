@@ -69,7 +69,7 @@ class TaskStore:
         with self._lock:
             self.save(task)
         return task
-
+    # 保存任务到文件系统
     def save(self, task: Task) -> None:
         if task.status not in TASK_STATUSES:
             raise ValueError(f"invalid task status: {task.status}")
@@ -108,8 +108,9 @@ class TaskStore:
             and self.load(dependency).status == "completed"
             for dependency in task.blockedBy
         )
-
+    # 尝试认领一个任务，如果成功则返回认领结果，否则返回错误信息
     def claim(self, task_id: str, owner: str = "agent") -> str:
+        # 使用锁来确保任务认领的原子性，避免多个线程同时认领同一个任务，这里GIL其实是不是会保证没有锁竞争？？
         with self._lock:
             task = self.load(task_id)
             if task.status != "pending":
@@ -117,6 +118,7 @@ class TaskStore:
             if task.owner:
                 return f"Task {task.id} already owned by {task.owner}"
             if not self.can_start(task.id):
+                # 如果任务被阻塞了，列出所有未完成的依赖任务
                 blocked = [
                     dependency for dependency in task.blockedBy
                     if not self.path_for(dependency).exists()
@@ -163,7 +165,7 @@ class TaskStore:
                     self.save(task)
                     changed.append(task.id)
         return changed
-
+    # 尝试认领下一个可用的任务，如果成功则返回该任务对象，否则返回None
     def claim_next(self, owner: str) -> Task | None:
         with self._lock:
             for task in self.list():

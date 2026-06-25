@@ -179,9 +179,13 @@ class ContextManager:
         return compacted, summary
 
     def prepare(self, messages: list[dict], summarize: Callable[[list[dict]], str]) -> tuple[list[dict], str | None]:
+        # 工具结果超出预算，持久化大工具结果。
         messages = self.tool_result_budget(messages)
+        # 如果消息数目太多>50，就裁剪中间的消息，保留开头的3条和结尾的若干条，并在中间插入占位消息提示被省略的消息数量，同时避免在工具调用和结果之间插入占位消息导致上下文不连贯。
         messages = self.snip_compact(messages)
+        # 微型压缩：保留最近的工具结果，将较早且过长的结果替换为占位符。
         messages = self.micro_compact(messages)
+        # 压缩兜底
         if estimate_tokens(messages) > self.context_limit:
             return self.compact_history(messages, summarize)
         return messages, None

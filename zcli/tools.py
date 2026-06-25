@@ -219,6 +219,7 @@ class ToolRegistry:
         memory = self.memory.remember(name, description, body, memory_type)
         return f"Remembered {memory.name} in {memory.filename}"
 
+    # 
     @staticmethod
     def _normalize_todos(todos) -> list[dict]:
         if isinstance(todos, str):
@@ -240,7 +241,7 @@ class ToolRegistry:
                 raise ValueError(f"todos[{index}] has invalid status: {status}")
             normalized.append({"content": content, "status": status})
         return normalized
-
+    # 将待办事项写入会话
     def todo_write(self, todos, session: Session | None) -> str:
         if session is None:
             raise ValueError("todo_write requires an active session")
