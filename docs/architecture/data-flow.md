@@ -107,6 +107,8 @@ Durable Task Graph:
 每次模型调用前都会执行便宜压缩层；各层有独立触发条件：
 
 - 当前轮工具结果总量超过 200,000 字符：最大的结果优先落盘；
+- 单个大结果保存为当前 Session 私有的 Artifact，上下文仅保留 ID、大小及 head/tail 预览；
+- 模型可通过 `inspect_artifact`、`search_artifact` 和 `read_artifact_chunk` 按需召回，不能读取其他 Session 的 Artifact；
 - 消息数超过 50：裁剪中间历史，但保持工具调用配对；
 - 工具结果超过 3 个：较早的大结果替换为短占位；
 - 处理后估算 token 仍超过 `ZCLI_CONTEXT_LIMIT`：保存 transcript，调用 LLM 摘要并以 `[Compacted]` 消息替换历史；

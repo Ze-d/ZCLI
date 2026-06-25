@@ -5,6 +5,7 @@ from typing import Callable
 
 from anthropic import Anthropic
 
+from .artifacts import ArtifactStore
 from .config import Settings
 from .context import ContextManager
 from .hooks import (
@@ -59,6 +60,7 @@ class Agent:
         self.client = client or Anthropic(base_url=settings.base_url)
         self.memory = MemoryStore(settings.data_dir)
         self.sessions = SessionStore(settings.data_dir)
+        self.artifacts = ArtifactStore(settings.data_dir)
         self.tasks = TaskStore(settings.data_dir)
         self.skills = SkillRegistry(settings.workspace / "skills")
         self.mcp = MCPManager(settings.workspace)
@@ -75,8 +77,9 @@ class Agent:
             self.subagents,
             self.team,
             self.worktrees,
+            self.artifacts,
         )
-        self.context = ContextManager(settings.data_dir, settings.context_limit)
+        self.context = ContextManager(settings.data_dir, settings.context_limit, artifacts=self.artifacts)
         self.hooks = hooks or HookManager()
         # Permission is registered first so an extension cannot bypass it by
         # returning an "allow" result, matching Claude Code's safety invariant.
@@ -164,6 +167,7 @@ class Agent:
                 prepared, summary = self.context.prepare(
                     session.messages,
                     lambda messages: self._summarize(messages, state, emit),
+                    session_id=session.id,
                 )
                 if prepared is not session.messages or summary is not None:
                     session.messages = prepared
@@ -302,8 +306,13 @@ class Agent:
                         session.rounds_since_todo += 1
                 # 打印前300个字符的输出，避免过长
                 emit(f"[{call['name']}] {output[:300]}")
-                # 如果工具返回结果太大，使用 context.persist_large_output 存储到文件，并返回文件路径
-                compact_output = self.context.persist_large_output(call["id"], output)
+                # Large results become session-scoped artifacts with bounded previews.
+                compact_output = self.artifacts.persist_if_large(
+                    session.id,
+                    call["id"],
+                    call["name"],
+                    output,
+                )
                 # 将工具调用结果写入会话消息中，方便后续恢复和分析
                 results.append({"type": "tool_result", "tool_use_id": call["id"], "content": compact_output})
             result_message = {"role": "user", "content": results}
@@ -318,6 +327,7 @@ class Agent:
         prepared, summary = self.context.prepare(
             session.messages,
             lambda messages: self._summarize(messages, RecoveryState(self.settings.model), lambda _: None),
+            session_id=session.id,
         )
         if prepared is not session.messages or summary:
             session.messages = prepared

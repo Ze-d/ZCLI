@@ -55,7 +55,7 @@ def test_full_agent_exposes_subagent_team_and_worktree_tools(tmp_path: Path):
     agent = Agent(Settings(workspace, tmp_path / "data", "fake", None), client=object(), interactive=False)
     try:
         names = {definition["name"] for definition in agent.tools.definitions}
-        assert len(names) == 27
+        assert len(names) == 30
         assert {
             "run_subagent",
             "spawn_teammate",
@@ -64,6 +64,9 @@ def test_full_agent_exposes_subagent_team_and_worktree_tools(tmp_path: Path):
             "create_worktree",
             "bind_task_worktree",
             "remove_worktree",
+            "inspect_artifact",
+            "search_artifact",
+            "read_artifact_chunk",
         } <= names
         assert agent.tools.execute("remove_worktree", {"name": "demo"}).startswith("Permission denied")
     finally:
