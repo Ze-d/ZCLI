@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from .artifacts import ArtifactStore
+
 # 估算token，直接拿json的大小来估计
 def estimate_tokens(messages: list[dict]) -> int:
     """Cheap token estimate, matching the teaching project's 4 chars/token rule."""
@@ -59,12 +61,14 @@ class ContextManager:
         keep_recent_tool_results: int = 3,
         persist_threshold: int = 30_000,
         tool_result_budget_bytes: int = 200_000,
+        artifacts: ArtifactStore | None = None,
     ):
         self.context_limit = context_limit
         self.max_messages = max_messages
         self.keep_recent_tool_results = keep_recent_tool_results
         self.persist_threshold = persist_threshold
         self.tool_result_budget_bytes = tool_result_budget_bytes
+        self.artifacts = artifacts
         self.transcript_dir = data_dir / "transcripts"
         self.tool_results_dir = data_dir / "tool-results"
 
@@ -82,8 +86,24 @@ class ContextManager:
             f"Preview:\n{output[:2000]}\n"
             "</persisted-output>"
         )
+
+    @staticmethod
+    def _source_tool(messages: list[dict], tool_use_id: str) -> str:
+        for message in reversed(messages):
+            content = message.get("content")
+            if message.get("role") != "assistant" or not isinstance(content, list):
+                continue
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool_use"
+                    and block.get("id") == tool_use_id
+                ):
+                    return str(block.get("name", "unknown"))
+        return "unknown"
+
     # 工具结果预算：如果用户消息中包含工具结果块且总大小超过预算，就从最大的开始压缩，直到总大小在预算内。压缩方式是持久化输出并替换为占位文本，实际内容可以通过提供的路径访问。
-    def tool_result_budget(self, messages: list[dict]) -> list[dict]:
+    def tool_result_budget(self, messages: list[dict], session_id: str | None = None) -> list[dict]:
         if not messages:
             return messages
         content = messages[-1].get("content")
@@ -101,8 +121,21 @@ class ContextManager:
             if total <= self.tool_result_budget_bytes:
                 break
             original = str(block.get("content", ""))
-            # 持久化输出并替换为占位文本，实际内容可以通过提供的路径访问
-            replacement = self.persist_large_output(block.get("tool_use_id", "unknown"), original)
+            tool_use_id = str(block.get("tool_use_id", "unknown"))
+            if self.artifacts:
+                if not session_id:
+                    raise ValueError("session_id is required for artifact persistence")
+                if original.startswith("<artifact-result>"):
+                    replacement = original
+                else:
+                    _, replacement = self.artifacts.persist(
+                        session_id,
+                        tool_use_id,
+                        self._source_tool(messages, tool_use_id),
+                        original,
+                    )
+            else:
+                replacement = self.persist_large_output(tool_use_id, original)
             block["content"] = replacement
             total -= len(original) - len(replacement)
         return messages
@@ -178,11 +211,23 @@ class ContextManager:
         compacted = [{"role": "user", "content": f"[Reactive compact]\n\n{summary}"}, *messages[tail_start:]]
         return compacted, summary
 
-    def prepare(self, messages: list[dict], summarize: Callable[[list[dict]], str]) -> tuple[list[dict], str | None]:
-        messages = self.tool_result_budget(messages)
+    def prepare(
+        self,
+        messages: list[dict],
+        summarize: Callable[[list[dict]], str],
+        session_id: str | None = None,
+    ) -> tuple[list[dict], str | None]:
+        # 工具结果超出预算，持久化大工具结果。
+        if session_id is None:
+            messages = self.tool_result_budget(messages)
+        else:
+            messages = self.tool_result_budget(messages, session_id=session_id)
+        # 如果消息数目太多>50，就裁剪中间的消息，保留开头的3条和结尾的若干条，并在中间插入占位消息提示被省略的消息数量，同时避免在工具调用和结果之间插入占位消息导致上下文不连贯。
         messages = self.snip_compact(messages)
+        # 微型压缩：保留最近的工具结果，将较早且过长的结果替换为占位符。
         messages = self.micro_compact(messages)
+        # 压缩兜底
+        # 这里压缩兜底是不是太完全了，我认为应该保存前几轮和最近几轮的消息，只对中间进行压缩
         if estimate_tokens(messages) > self.context_limit:
             return self.compact_history(messages, summarize)
         return messages, None
-

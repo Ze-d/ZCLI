@@ -94,7 +94,7 @@ class WorktreeManager:
         value = {"event": event, "name": name, "task_id": task_id, "timestamp": _now()}
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(value, ensure_ascii=False) + "\n")
-
+    # 创建一个新的工作树，如果指定了task_id，则将工作树与该任务绑定，并在Git中创建一个新的分支
     def create(self, name: str, task_id: str = "") -> str:
         name = self.validate_name(name)
         with self._lock:

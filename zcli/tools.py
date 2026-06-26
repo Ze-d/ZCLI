@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from .artifacts import ArtifactStore
 from .memory import MemoryStore
 from .mcp import MCPManager
 from .permissions import PermissionPolicy
@@ -32,6 +33,7 @@ class ToolRegistry:
         subagents: SubagentRunner | None = None,
         team: TeamManager | None = None,
         worktrees: WorktreeManager | None = None,
+        artifacts: ArtifactStore | None = None,
     ):
         self.workspace = workspace.resolve()
         self.memory = memory
@@ -41,6 +43,7 @@ class ToolRegistry:
         self.subagents = subagents
         self.team = team
         self.worktrees = worktrees
+        self.artifacts = artifacts
         self.policy = PermissionPolicy(self.workspace, interactive)
         self.handlers: dict[str, Callable[..., str]] = {
             "bash": self._run_bash,
@@ -96,6 +99,37 @@ class ToolRegistry:
             self._tool("load_skill", "Load the full SKILL.md instructions for a relevant skill from the catalog.", {"name": {"type": "string"}}, ["name"]),
             self._tool("connect_mcp", "Connect to a configured MCP server and discover its external tools.", {"name": {"type": "string"}}, ["name"]),
         ]
+        if self.artifacts:
+            builtins.extend([
+                self._tool(
+                    "inspect_artifact",
+                    "Inspect metadata and head/tail previews for a large tool result in the current session.",
+                    {"artifact_id": {"type": "string"}},
+                    ["artifact_id"],
+                ),
+                self._tool(
+                    "search_artifact",
+                    "Search a large tool result in the current session and return bounded matching context with line and character offsets.",
+                    {
+                        "artifact_id": {"type": "string"},
+                        "query": {"type": "string"},
+                        "regex": {"type": "boolean"},
+                        "context_lines": {"type": "integer"},
+                        "max_matches": {"type": "integer"},
+                    },
+                    ["artifact_id", "query"],
+                ),
+                self._tool(
+                    "read_artifact_chunk",
+                    "Read a bounded character range from a large tool result in the current session. Use next_offset to continue.",
+                    {
+                        "artifact_id": {"type": "string"},
+                        "offset": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                    ["artifact_id"],
+                ),
+            ])
         if self.subagents:
             builtins.append(self.subagents.tool_definition())
         if self.team:
@@ -162,6 +196,32 @@ class ToolRegistry:
                 return self.todo_write(arguments.get("todos", []), session)
             except Exception as exc:
                 return f"Error: {type(exc).__name__}: {exc}"
+        if name in {"inspect_artifact", "search_artifact", "read_artifact_chunk"}:
+            if not self.artifacts:
+                return "Error: artifact storage is not configured"
+            if session is None:
+                return "Error: artifact access requires an active session"
+            try:
+                artifact_id = str(arguments.get("artifact_id", ""))
+                if name == "inspect_artifact":
+                    return self.artifacts.inspect(session.id, artifact_id)
+                if name == "search_artifact":
+                    return self.artifacts.search(
+                        session.id,
+                        artifact_id,
+                        str(arguments.get("query", "")),
+                        bool(arguments.get("regex", False)),
+                        int(arguments.get("context_lines", 5)),
+                        int(arguments.get("max_matches", 20)),
+                    )
+                return self.artifacts.read_chunk(
+                    session.id,
+                    artifact_id,
+                    int(arguments.get("offset", 0)),
+                    int(arguments.get("limit", 8_000)),
+                )
+            except Exception as exc:
+                return f"Error: {type(exc).__name__}: {exc}"
         handler = self.handlers.get(name)
         if not handler and name not in self.mcp.tools:
             return f"Error: unknown tool {name}"
@@ -185,14 +245,14 @@ class ToolRegistry:
     def _run_bash(self, command: str) -> str:
         result = subprocess.run(command, shell=True, cwd=self.workspace, capture_output=True, text=True, timeout=120)
         output = (result.stdout + result.stderr).strip()
-        return (output or "(no output)")[:50_000]
+        return output or "(no output)"
 
     def bash(self, command: str) -> str:
         """Safe direct-call facade; Agent execution uses the PreToolUse hook."""
         return self.execute("bash", {"command": command})
 
     def read_file(self, path: str) -> str:
-        return self._path(path).read_text(encoding="utf-8")[:50_000]
+        return self._path(path).read_text(encoding="utf-8")
 
     def write_file(self, path: str, content: str) -> str:
         target = self._path(path)
@@ -219,6 +279,7 @@ class ToolRegistry:
         memory = self.memory.remember(name, description, body, memory_type)
         return f"Remembered {memory.name} in {memory.filename}"
 
+    # 
     @staticmethod
     def _normalize_todos(todos) -> list[dict]:
         if isinstance(todos, str):
@@ -240,7 +301,7 @@ class ToolRegistry:
                 raise ValueError(f"todos[{index}] has invalid status: {status}")
             normalized.append({"content": content, "status": status})
         return normalized
-
+    # 将待办事项写入会话
     def todo_write(self, todos, session: Session | None) -> str:
         if session is None:
             raise ValueError("todo_write requires an active session")

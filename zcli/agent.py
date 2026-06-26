@@ -5,6 +5,7 @@ from typing import Callable
 
 from anthropic import Anthropic
 
+from .artifacts import ArtifactStore
 from .config import Settings
 from .context import ContextManager
 from .hooks import (
@@ -59,6 +60,7 @@ class Agent:
         self.client = client or Anthropic(base_url=settings.base_url)
         self.memory = MemoryStore(settings.data_dir)
         self.sessions = SessionStore(settings.data_dir)
+        self.artifacts = ArtifactStore(settings.data_dir)
         self.tasks = TaskStore(settings.data_dir)
         self.skills = SkillRegistry(settings.workspace / "skills")
         self.mcp = MCPManager(settings.workspace)
@@ -75,8 +77,9 @@ class Agent:
             self.subagents,
             self.team,
             self.worktrees,
+            self.artifacts,
         )
-        self.context = ContextManager(settings.data_dir, settings.context_limit)
+        self.context = ContextManager(settings.data_dir, settings.context_limit, artifacts=self.artifacts)
         self.hooks = hooks or HookManager()
         # Permission is registered first so an extension cannot bypass it by
         # returning an "allow" result, matching Claude Code's safety invariant.
@@ -84,9 +87,11 @@ class Agent:
         self.hooks.register(POST_TOOL_USE, large_output_hook)
 
     def system_prompt(self, query: str, session: Session | None = None) -> str:
+        # 注入当前的长期记忆
         index = self.memory.index()
         relevant = self.memory.render_relevant(query)
         memory_section = "\n\nLong-term memory catalog:\n" + index if index else ""
+        # todo_section 显示当前会话的待办事项
         todo_section = ""
         if session and session.todos:
             todo_section = "\n\nCurrent session todos:\n" + "\n".join(
@@ -157,10 +162,12 @@ class Agent:
                 turn_messages.append(reminder)
                 session.rounds_since_todo = 0
                 self.sessions.save(session)
+            # 每次循环都尝试准备消息和摘要，如果消息过长则进行压缩 
             try:
                 prepared, summary = self.context.prepare(
                     session.messages,
                     lambda messages: self._summarize(messages, state, emit),
+                    session_id=session.id,
                 )
                 if prepared is not session.messages or summary is not None:
                     session.messages = prepared
@@ -297,8 +304,16 @@ class Agent:
                         output = post.updated_output
                     if call["name"] != "todo_write":
                         session.rounds_since_todo += 1
+                # 打印前300个字符的输出，避免过长
                 emit(f"[{call['name']}] {output[:300]}")
-                compact_output = self.context.persist_large_output(call["id"], output)
+                # Large results become session-scoped artifacts with bounded previews.
+                compact_output = self.artifacts.persist_if_large(
+                    session.id,
+                    call["id"],
+                    call["name"],
+                    output,
+                )
+                # 将工具调用结果写入会话消息中，方便后续恢复和分析
                 results.append({"type": "tool_result", "tool_use_id": call["id"], "content": compact_output})
             result_message = {"role": "user", "content": results}
             session.messages.append(result_message)
@@ -312,6 +327,7 @@ class Agent:
         prepared, summary = self.context.prepare(
             session.messages,
             lambda messages: self._summarize(messages, RecoveryState(self.settings.model), lambda _: None),
+            session_id=session.id,
         )
         if prepared is not session.messages or summary:
             session.messages = prepared
@@ -343,6 +359,7 @@ class Agent:
             if block.get("type") == "text"
         ).strip()
 
+    # 从对话消息中提取记忆，调用模型进行筛选和结构化，并保存到记忆库
     def _extract_memories(self, turn_messages: list[dict]) -> None:
         dialogue = json.dumps(turn_messages, ensure_ascii=False)[:12_000]
         prompt = (

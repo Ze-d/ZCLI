@@ -161,6 +161,7 @@ class TeamManager:
             stop_event = threading.Event()
             self.members[name] = state
             self._stops[name] = stop_event
+            # 启动队友线程
             thread = threading.Thread(
                 target=self._teammate_loop,
                 args=(state, prompt.strip(), stop_event),

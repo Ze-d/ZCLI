@@ -440,7 +440,7 @@ class StreamableHTTPMCPClient:
             "Content-Type": "application/json",
         }
         if not initialization:
-            headers["MCP-Protocol-Version"] = self.protocol_version
+            headers["Mcp-Protocol-Version"] = self.protocol_version
             if self.session_id:
                 headers["Mcp-Session-Id"] = self.session_id
         return headers

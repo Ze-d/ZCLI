@@ -171,3 +171,55 @@ def test_compact_no_trigger_below_threshold(tmp_path: Path):
     ]
     agent._compact_if_needed(session)
     assert session.summary == ""  # 2 < 8，不触发
+
+
+class FakeLargeToolMessages:
+    def __init__(self):
+        self.calls = 0
+
+    def create(self, **kwargs):
+        if "tools" not in kwargs:
+            return SimpleNamespace(content=[Block(type="text", text="[]")], stop_reason="end_turn")
+        self.calls += 1
+        if self.calls == 1:
+            return SimpleNamespace(
+                content=[
+                    Block(
+                        type="tool_use",
+                        id="large-read",
+                        name="read_file",
+                        input={"path": "large.txt"},
+                    )
+                ],
+                stop_reason="tool_use",
+            )
+        return SimpleNamespace(content=[Block(type="text", text="读取完成")], stop_reason="end_turn")
+
+
+def test_agent_persists_complete_large_tool_output_as_session_artifact(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    content = "HEAD\n" + ("x" * 75_000) + "\nTAIL"
+    (workspace / "large.txt").write_text(content, encoding="utf-8")
+    messages = FakeLargeToolMessages()
+    agent = Agent(
+        Settings(workspace, tmp_path / "data", "fake-model", None),
+        client=SimpleNamespace(messages=messages),
+        interactive=False,
+    )
+    session = agent.sessions.create("artifact-session")
+
+    assert agent.run_turn(session, "读取大文件", emit=lambda _: None) == "读取完成"
+
+    tool_result = session.messages[2]["content"][0]["content"]
+    assert "<artifact-result>" in tool_result
+    artifact_id = tool_result.split("Artifact ID: ", 1)[1].splitlines()[0]
+    artifact_path = (
+        tmp_path
+        / "data"
+        / "artifacts"
+        / session.id
+        / artifact_id
+        / "content.txt"
+    )
+    assert artifact_path.read_text(encoding="utf-8") == content
